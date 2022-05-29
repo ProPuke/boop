@@ -4,7 +4,7 @@ each platform in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc x86_64-apple-da
 
 	task package-{platform}
 		requires task build-{platform}
-		run zip -r bin/boop-{platform}.zip bin/{platform}
+		run zip -r -j bin/boop-{platform}.zip bin/{platform}
 
 	task build-all
 		requires task build-{platform}
