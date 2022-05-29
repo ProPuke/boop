@@ -32,6 +32,7 @@ Or to be fancy and keep boop running, watching your files, and *automatically* r
 * Tasks are executed in a simple predictable order, top to bottom, in parallel, with parent tasks waiting for all their dependencies to complete before proceeeding
 * The syntax tries to be simple and clean, so you can think about tasks and files and getting things done, not abstract concepts like dependency chains and job pools
 * No hidden gotchas or non-obvious behaviours
+* [VSCode extension](https://marketplace.visualstudio.com/items?itemName=ProPuke.boop) for syntax highlighting
 
 ## Commandline Parameters
 
