@@ -880,7 +880,7 @@ class Script {
 				currentTask.parsedLines.push({ type: 'run', optional: isOptional, command: command, source: line.source, debugVars:debugVars.join(' ') });
 
 			}else if(match = line.source.match(/^task\s+(.*)$/)){
-				const name = match[1];
+				const name = await parse(line, match[1]);
 
 				let end = i+1;
 				while(end<this.lines.length){
