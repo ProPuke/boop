@@ -1,0 +1,2 @@
+#!/bin/sh
+deno run --allow-read --allow-write --allow-env --allow-run ./build.ts $@

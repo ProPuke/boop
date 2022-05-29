@@ -1,0 +1,27 @@
+set executable = programName
+set cxxflags = -Werror -Wall
+set ldflags = -lm
+
+flag debug
+	set cxxflags = {cxxflags} -g -D DEBUG
+
+flag not debug
+	set cxxflags = {cxxflags} -O2 -D RELEASE
+	set ldflags = {ldflags} -O2
+
+each file in {src/**/*.cpp} {utils/**/*.cpp}
+	task build
+		provides {file}.o
+		requires {file}
+		run g++ {file} -o {file}.o {cxxflags}
+
+task build
+	run gcc -o {executable} {src/**/*.cpp as *.cpp.o} {utils/**/*.cpp as *.cpp.o} {lflags}
+
+task clean
+	each object in {src/**/*.o} {utils/**/*.o}
+		run rm {object}
+
+task test
+	requires task build
+	run {executable}
