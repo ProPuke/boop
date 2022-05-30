@@ -339,8 +339,8 @@ if(!taskName){
 	Deno.exit(0);
 }
 
-if(jobs<=1){
-	jobs = navigator.hardwareConcurrency;
+if(jobs<1){
+	jobs = navigator.hardwareConcurrency+1;
 }
 
 const runQueue = new JobPool(jobs);
