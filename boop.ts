@@ -422,6 +422,7 @@ class Script {
 	readonly tasks:Task[] = [];
 	readonly globs:string[] = [];
 	readonly modifiedFiles:string[] = [];
+	currentJobs = new WeakMap<Task, Promise<boolean|'aborted'>>();
 
 	constructor(source:string= '') {
 		let i = 0;
@@ -434,6 +435,10 @@ class Script {
 			this.lines.push({lineNumber:i, indent, source:line.trimStart()});
 			i++;
 		}
+	}
+
+	clear_current_jobs() {
+		this.currentJobs = new WeakMap<Task, Promise<boolean|'aborted'>>();
 	}
 
 	async compile(flags:string[] = []) {
@@ -516,178 +521,184 @@ class Script {
 				const taskJobs:Promise<true|false|'aborted'>[] = [];
 
 				for(const task of tasks){
-					const promise = (async() => {
-						// check all task dependencies first...
-						{
-							const dependencyJobs:Promise<true|false|'aborted'>[] = [];
+					let promise = this.currentJobs.get(task);
 
-							let isFinished = false;
+					if(!promise){
+						promise = (async() => {
+							// check all task dependencies first...
+							{
+								const dependencyJobs:Promise<true|false|'aborted'>[] = [];
 
-							for(const [i, dependency] of task.taskDependencies.entries()){
-							// const job = jobs[i];
-								dependencyJobs.push((async () => {
-									const childTask = this.execute_tasks(tags, `running task "${dependency.task.name}"`, [dependency.task]);
-									childExecutions.push(childTask)
+								let isFinished = false;
 
-									const result = await childTask.promise;
-									
-									switch(result){
-										case true:
-										break;
-										case false:
-											if(!dependency.optional){
-												// await Promise.allSettled(dependencyJobs);
-												if(!isFinished) {
-													isFinished = true;
-													log_status_failure(`Could not run "${taskName}" task, as "${dependency.task.name}" task failed`);
-													runQueue.cancel_tag(currentRunTag);
-													return 'aborted';
+								for(const [i, dependency] of task.taskDependencies.entries()){
+								// const job = jobs[i];
+									dependencyJobs.push((async () => {
+										const childTask = this.execute_tasks(tags, `running task "${dependency.task.name}"`, [dependency.task]);
+										childExecutions.push(childTask)
+
+										const result = await childTask.promise;
+										
+										switch(result){
+											case true:
+											break;
+											case false:
+												if(!dependency.optional){
+													// await Promise.allSettled(dependencyJobs);
+													if(!isFinished) {
+														isFinished = true;
+														log_status_failure(`Could not run "${taskName}" task, as "${dependency.task.name}" task failed`);
+														runQueue.cancel_tag(currentRunTag);
+														return 'aborted';
+													}
+													return false;
 												}
-												return false;
-											}
-										break;
-										case 'aborted':
-											// await Promise.allSettled(dependencyJobs);
-											isFinished = true;
-											runQueue.cancel_tag(currentRunTag);
-											return 'aborted';
-										break;
-									}
-
-									return true;
-								})());
-							}
-
-							const completed = await Promise.allSettled(dependencyJobs);
-
-							if(isCancelled) return 'aborted';
-
-							// if any solid failures, fail
-							for(const result of completed){
-								if(result.status!='fulfilled'||result.value===false){
-									return false;
-								}
-							}
-
-							// otherwise, if there were silent aborts, silently abort
-							for(const result of completed){
-								if(result.status=='fulfilled'&&result.value=='aborted'){
-									return 'aborted';
-								}
-							}
-						}
-
-						let newestDate:number|null = null;
-
-						// check for all dependent files second.. (so that tasks can create them)
-						{
-							const dependencyJobs:Promise<boolean>[] = [];
-
-							let isFinished = false;
-
-							for(const dependency of task.fileDependencies){
-								dependencyJobs.push((async () => {
-									const date = await file_date(dependency);
-									if(!date){
-										if(!isFinished) {
-											isFinished = true;
-											log_status_failure(`Error attempting to run "${taskName}" task: Required file "${dependency}" was not found.`);
-											runQueue.cancel_tag(currentRunTag);
+											break;
+											case 'aborted':
+												// await Promise.allSettled(dependencyJobs);
+												isFinished = true;
+												runQueue.cancel_tag(currentRunTag);
+												return 'aborted';
+											break;
 										}
+
+										return true;
+									})());
+								}
+
+								const completed = await Promise.allSettled(dependencyJobs);
+
+								if(isCancelled) return 'aborted';
+
+								// if any solid failures, fail
+								for(const result of completed){
+									if(result.status!='fulfilled'||result.value===false){
 										return false;
 									}
-									if(newestDate===null||date>newestDate){
-										newestDate = date;
-									}
-
-									return true;
-								})());
-							}
-
-							const completed = await Promise.allSettled(dependencyJobs);
-
-							if(isCancelled) return 'aborted';
-
-							for(const result of completed){
-								if(result.status!='fulfilled'||!result.value){
-									return false;
 								}
-							}
-						}
 
-						let outOfDate = false;
-
-						// check if task is out of date
-						if(!task.providedFiles.length){
-							outOfDate = true;
-						}else{
-							for(const provide of task.providedFiles){
-								const date = await file_date(provide);
-								if(date===null||newestDate&&date<newestDate){
-									outOfDate = true;
-									break;
-								}
-							}
-						}
-
-						// execute actions
-						if(outOfDate){
-							if(verbosity>=Verbosity.tasks) {
-								log_status_action(`${color.bold('Executing')} "${task.name}" task...`);
-							}
-
-							const taskJobs:Promise<true|false|'aborted'>[] = [];
-
-							let isFinished = false;
-
-							for(const line of task.parsedLines){
-								if(verbosity>=Verbosity.debug) {
-									log_verbose(true, `>> ${line.source}`);
-									if(line.debugVars){
-										log_verbose(true, `   (${line.debugVars})`);
+								// otherwise, if there were silent aborts, silently abort
+								for(const result of completed){
+									if(result.status=='fulfilled'&&result.value=='aborted'){
+										return 'aborted';
 									}
 								}
+							}
 
-								if(verbosity>=Verbosity.tasksAndCommands) {
-									log_verbose(true, `> ${line.command}`);
-								}
+							let newestDate:number|null = null;
 
-								if(!dryRun) {
-									const job = (async ()=>{
-										const result = await run_process(tags, params_parse(line.command));
-										if(isCancelled) return 'aborted';
-										
-										if(line.optional&&result===false) return true;
+							// check for all dependent files second.. (so that tasks can create them)
+							{
+								const dependencyJobs:Promise<boolean>[] = [];
 
-										if(result!==true){
-											isFinished = true;
-											runQueue.cancel_tag(currentRunTag);
+								let isFinished = false;
+
+								for(const dependency of task.fileDependencies){
+									dependencyJobs.push((async () => {
+										const date = await file_date(dependency);
+										if(!date){
+											if(!isFinished) {
+												isFinished = true;
+												log_status_failure(`Error attempting to run "${taskName}" task: Required file "${dependency}" was not found.`);
+												runQueue.cancel_tag(currentRunTag);
+											}
+											return false;
+										}
+										if(newestDate===null||date>newestDate){
+											newestDate = date;
 										}
 
-										return result;
-									})();
+										return true;
+									})());
+								}
 
-									taskJobs.push(job);
-									jobs.push(job);
+								const completed = await Promise.allSettled(dependencyJobs);
+
+								if(isCancelled) return 'aborted';
+
+								for(const result of completed){
+									if(result.status!='fulfilled'||!result.value){
+										return false;
+									}
 								}
 							}
 
-							for(const file of task.providedFiles){
-								if(!this.modifiedFiles.includes(file)){
-									this.modifiedFiles.push(file);
+							let outOfDate = false;
+
+							// check if task is out of date
+							if(!task.providedFiles.length){
+								outOfDate = true;
+							}else{
+								for(const provide of task.providedFiles){
+									const date = await file_date(provide);
+									if(date===null||newestDate&&date<newestDate){
+										outOfDate = true;
+										break;
+									}
 								}
 							}
 
-							await Promise.allSettled(taskJobs);
+							// execute actions
+							if(outOfDate){
+								if(verbosity>=Verbosity.tasks) {
+									log_status_action(`${color.bold('Executing')} "${task.name}" task...`);
+								}
 
-							//update cached data on all provided files, as they may have been updated
-							for(const provides of task.providedFiles){
-								const date = await file_date(provides, false);
+								const taskJobs:Promise<true|false|'aborted'>[] = [];
+
+								let isFinished = false;
+
+								for(const line of task.parsedLines){
+									if(verbosity>=Verbosity.debug) {
+										log_verbose(true, `>> ${line.source}`);
+										if(line.debugVars){
+											log_verbose(true, `   (${line.debugVars})`);
+										}
+									}
+
+									if(verbosity>=Verbosity.tasksAndCommands) {
+										log_verbose(true, `> ${line.command}`);
+									}
+
+									if(!dryRun) {
+										const job = (async ()=>{
+											const result = await run_process(tags, params_parse(line.command));
+											if(isCancelled) return 'aborted';
+											
+											if(line.optional&&result===false) return true;
+
+											if(result!==true){
+												isFinished = true;
+												runQueue.cancel_tag(currentRunTag);
+											}
+
+											return result;
+										})();
+
+										taskJobs.push(job);
+										jobs.push(job);
+									}
+								}
+
+								for(const file of task.providedFiles){
+									if(!this.modifiedFiles.includes(file)){
+										this.modifiedFiles.push(file);
+									}
+								}
+
+								await Promise.allSettled(taskJobs);
+
+								//update cached data on all provided files, as they may have been updated
+								for(const provides of task.providedFiles){
+									const date = await file_date(provides, false);
+								}
 							}
-						}
 
-						return true;
-					})();
+							return true;
+						})();
+
+						this.currentJobs.set(task, promise);
+					}
 					
 					taskJobs.push(promise);
 					jobs.push(promise);
