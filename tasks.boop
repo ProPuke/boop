@@ -1,10 +1,8 @@
 each platform in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc x86_64-apple-darwin aarch64-apple-darwin
-	task build-all
-		run deno compile --allow-read --allow-write --allow-env --allow-run --target {platform} --output bin/{platform}/ boop.ts
-
 	task package
-		requires task build-all
-		run zip -r -j bin/boop-{platform}.zip bin/{platform}
+		requires boop.ts
+		run deno compile -q --allow-read --allow-write --allow-env --allow-run --target {platform} --output bin/{platform}/ boop.ts
+		run zip -q -r -j bin/boop-{platform}.zip bin/{platform}
 
 task build
 	run deno compile --allow-read --allow-write --allow-env --allow-run --output bin/ boop.ts
