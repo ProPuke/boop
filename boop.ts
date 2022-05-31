@@ -644,9 +644,12 @@ class Script {
 									log_status_action(`${color.bold('Executing')} "${task.name}" task...`);
 								}
 
-								const taskJobs:Promise<true|false|'aborted'>[] = [];
-
-								let isFinished = false;
+								// mark all files we're about to change
+								for(const file of task.providedFiles){
+									if(!this.modifiedFiles.includes(file)){
+										this.modifiedFiles.push(file);
+									}
+								}
 
 								for(const line of task.parsedLines){
 									if(verbosity>=Verbosity.debug) {
@@ -661,32 +664,17 @@ class Script {
 									}
 
 									if(!dryRun) {
-										const job = (async ()=>{
-											const result = await run_process(tags, params_parse(line.command));
-											if(isCancelled) return 'aborted';
+										const result = await run_process(tags, params_parse(line.command));
+										if(isCancelled) return 'aborted';
 											
-											if(line.optional&&result===false) return true;
+										if(line.optional&&result===false) return true;
 
-											if(result!==true){
-												isFinished = true;
-												runQueue.cancel_tag(currentRunTag);
-											}
-
-											return result;
-										})();
-
-										taskJobs.push(job);
-										jobs.push(job);
+										if(result!==true){
+											runQueue.cancel_tag(currentRunTag);
+											break;
+										}
 									}
 								}
-
-								for(const file of task.providedFiles){
-									if(!this.modifiedFiles.includes(file)){
-										this.modifiedFiles.push(file);
-									}
-								}
-
-								await Promise.allSettled(taskJobs);
 
 								//update cached data on all provided files, as they may have been updated
 								for(const provides of task.providedFiles){
