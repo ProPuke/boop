@@ -987,6 +987,8 @@ async function run_watch(script:Script, flags:string[]) {
 	const cwd = Deno.cwd();
 	const globs:string[] = [];
 	const regexes:RegExp[] = [];
+	const filenames = new Set<string>();
+
 	for(const x of script.globs){
 		const glob = path.joinGlobs([cwd, x], { extended:false, globstar:true });
 		globs.push(x);
@@ -994,6 +996,17 @@ async function run_watch(script:Script, flags:string[]) {
 	}
 
 	let basedirs = find_basedirs_of_globs(globs);
+
+	for(const task of script.tasks){
+		for(const name of task.fileDependencies){
+			const filename = path.resolve(name);
+			const dirname = path.dirname(filename);
+			if(!basedirs.includes(dirname)){
+				basedirs.push(dirname);
+			}
+			filenames.add(filename);
+		}
+	}
 
 	let currentTimeout:number|undefined;
 
@@ -1040,7 +1053,7 @@ async function run_watch(script:Script, flags:string[]) {
 		console.log();
 	}
 
-	const scriptPath = path.join(Deno.cwd(), scriptName);
+	const scriptPath = path.resolve(scriptName);
 
 	const fsWatcher = Deno.watchFs([...basedirs, scriptPath], { recursive: true });
 
@@ -1059,14 +1072,18 @@ async function run_watch(script:Script, flags:string[]) {
 				break;
 
 			}else{
-				for(const regex of regexes){
-					if(regex.test(eventPath)){
-						if(modifiedFiles.some(modified => path.resolve(cwd, modified) == eventPath)){
+				if(filenames.has(eventPath)&&!modifiedFiles.some(modified => path.resolve(modified) == eventPath)){
+					filesMatched = true;
+				}else{
+					for(const regex of regexes){
+						if(regex.test(eventPath)){
+							if(modifiedFiles.some(modified => path.resolve(modified) == eventPath)){
+								break;
+							}
+							// console.log(eventPath);
+							filesMatched = true;
 							break;
 						}
-						// console.log(eventPath);
-						filesMatched = true;
-						break;
 					}
 				}
 				if(filesMatched) break;
