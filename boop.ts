@@ -116,16 +116,11 @@ async function file_date(path:string, useCache = true) {
 	return date;
 }
 
-function find_basedirs_of_globs(globs:string[]):string[] {
-	const dirs:string[] = [];
+function get_glob_dir(glob:string):string {
+	return path.resolve(path.dirname(glob.replace(/(^|\/)\*\*\/.*/g, '$1*.*')));
+}
 
-	for(const glob of globs){
-		const dir = path.normalize(path.dirname(glob.replace(/(^|\/)\*\*\/.*/g, '*.*')));
-		if(dirs.includes(dir)) continue;
-
-		dirs.push(dir);
-	}
-
+function get_basedirs_of_dirs(dirs:string[]):string[] {
 	// remove dir entries nested within others (relative paths without ../ or /)
 	for(let i=0;i<dirs.length;i++){
 		const dirA = dirs[i];
@@ -986,16 +981,20 @@ async function run_once(script:Script, flags:string[]):Promise<true|false|'abort
 async function run_watch(script:Script, flags:string[]) {
 	const cwd = Deno.cwd();
 	const globs:string[] = [];
+	let basedirs:string[] = [];
 	const regexes:RegExp[] = [];
 	const filenames = new Set<string>();
 
+	// get dirs of search globs
 	for(const x of script.globs){
 		const glob = path.joinGlobs([cwd, x], { extended:false, globstar:true });
+		const dir = get_glob_dir(x);
 		globs.push(x);
+		if(!basedirs.includes(dir)){
+			basedirs.push(dir);
+		}
 		regexes.push(path.globToRegExp(glob, { extended:false, globstar:true, caseInsensitive:false }));
 	}
-
-	let basedirs = find_basedirs_of_globs(globs);
 
 	for(const task of script.tasks){
 		for(const name of task.fileDependencies){
@@ -1007,6 +1006,9 @@ async function run_watch(script:Script, flags:string[]) {
 			filenames.add(filename);
 		}
 	}
+
+	// reduce to common basedirs
+	basedirs = get_basedirs_of_dirs(basedirs);
 
 	let currentTimeout:number|undefined;
 
@@ -1049,7 +1051,7 @@ async function run_watch(script:Script, flags:string[]) {
 		console.log();
 
 	}else{
-		log_status_action(`${color.bold('Watching')} for file changes (in ${basedirs.join('/ ')}/)`);
+		log_status_action(`${color.bold('Watching')} for file changes (in ${basedirs.map(x => path.relative(cwd, x)).join('/ ')}/)`);
 		console.log();
 	}
 
