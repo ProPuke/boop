@@ -405,8 +405,8 @@ type Task = {
 	taskDependenciesByName: { optional: boolean, name: string }[],
 	taskDependencies: { optional: boolean, task: Task }[],
 	fileDependencies: string[],
-	// netProvidedFiles: string[],
-	// netFileDependencies: string[],
+	netProvidedFiles: string[],
+	netFileDependencies: string[],
 	parsedLines: ParsedLine[]
 };
 
@@ -439,11 +439,15 @@ class Script {
 	async compile(flags:string[] = []) {
 		await this.compileRegion(undefined, 0, this.lines.length, new Map<string,string>(), flags);
 
+		const compiledTasks = new Set<Task>();
+
 		const finalTaskPass = (task:Task, parentNames:string[]) => {
+			if(compiledTasks.has(task)) return;
+
 			const childNames = [...parentNames, task.name];
 
-			// task.netFileDependencies = [...task.fileDependencies];
-			// task.netProvidedFiles = [...task.providedFiles];
+			task.netFileDependencies = [...task.fileDependencies];
+			task.netProvidedFiles = [...task.providedFiles];
 
 			for(const dependency of task.taskDependenciesByName){
 				if(childNames.includes(dependency.name)){
@@ -454,27 +458,29 @@ class Script {
 				for(const childTask of this.tasks){
 					if(childTask.name==dependency.name){
 						task.taskDependencies.push({optional: dependency.optional, task:childTask});
-						// finalTaskPass(childTask, childNames);
-						// for(const file of childTask.fileDependencies){
-						// 	if(!task.netFileDependencies.includes(file)){
-						// 		task.netFileDependencies.push(file);
-						// 	}
-						// }
-						// for(const file of childTask.providedFiles){
-						// 	if(!task.netProvidedFiles.includes(file)){
-						// 		task.netProvidedFiles.push(file);
-						// 	}
-						// }
+						finalTaskPass(childTask, childNames);
+						for(const file of childTask.fileDependencies){
+							if(!task.netFileDependencies.includes(file)){
+								task.netFileDependencies.push(file);
+							}
+						}
+						for(const file of childTask.providedFiles){
+							if(!task.netProvidedFiles.includes(file)){
+								task.netProvidedFiles.push(file);
+							}
+						}
 					}
 				}
 			}
 
-			// // file dependencies that are self-provided needn't propagate outward to parents as they've been fulfilled internally (but provided files still propagate)
-			// for(let i=0;i<task.netFileDependencies.length;i++){
-			// 	if(task.netProvidedFiles.includes(task.netFileDependencies[i])){
-			// 		task.netFileDependencies.splice(i--, 1);
-			// 	}
-			// }
+			// file dependencies that are self-provided needn't propagate outward to parents as they've been fulfilled internally (but provided files still propagate)
+			for(let i=0;i<task.netFileDependencies.length;i++){
+				if(task.netProvidedFiles.includes(task.netFileDependencies[i])){
+					task.netFileDependencies.splice(i--, 1);
+				}
+			}
+
+			compiledTasks.add(task);
 		}
 
 		for(const task of this.tasks){
@@ -888,8 +894,8 @@ class Script {
 					fileDependencies: [],
 					taskDependenciesByName: [],
 					taskDependencies: [],
-					// netProvidedFiles: [],
-					// netFileDependencies: [],
+					netProvidedFiles: [],
+					netFileDependencies: [],
 					parsedLines: []
 				};
 
@@ -949,7 +955,7 @@ async function run():Promise<boolean> {
 		await script.compile(flags);
 	
 		if(watch){
-			await run_watch(script, flags);
+			await run_watch(script, taskName, flags);
 	
 		}else{
 			if(await run_once(script, flags)===false){
@@ -978,7 +984,7 @@ async function run_once(script:Script, flags:string[]):Promise<true|false|'abort
 	return result;
 }
 
-async function run_watch(script:Script, flags:string[]) {
+async function run_watch(script:Script, taskName:string, flags:string[]) {
 	const cwd = Deno.cwd();
 	const globs:string[] = [];
 	let basedirs:string[] = [];
@@ -997,13 +1003,15 @@ async function run_watch(script:Script, flags:string[]) {
 	}
 
 	for(const task of script.tasks){
-		for(const name of task.fileDependencies){
-			const filename = path.resolve(name);
-			const dirname = path.dirname(filename);
-			if(!basedirs.includes(dirname)){
-				basedirs.push(dirname);
+		if(task.name==taskName){
+			for(const name of task.netFileDependencies){
+				const filename = path.resolve(name);
+				const dirname = path.dirname(filename);
+				if(!basedirs.includes(dirname)){
+					basedirs.push(dirname);
+				}
+				filenames.add(filename);
 			}
-			filenames.add(filename);
 		}
 	}
 
