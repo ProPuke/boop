@@ -652,6 +652,8 @@ class Script {
 									}
 								}
 
+								let succeeded = true;
+
 								for(const line of task.parsedLines){
 									if(verbosity>=Verbosity.debug) {
 										log_verbose(true, `>> ${line.source}`);
@@ -672,6 +674,7 @@ class Script {
 
 										if(result!==true){
 											runQueue.cancel_tag(currentRunTag);
+											succeeded = false;
 											break;
 										}
 									}
@@ -680,6 +683,10 @@ class Script {
 								//update cached data on all provided files, as they may have been updated
 								for(const provides of task.providedFiles){
 									const date = await file_date(provides, false);
+								}
+
+								if(!succeeded){
+									return false;
 								}
 							}
 
