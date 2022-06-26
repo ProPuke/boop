@@ -187,6 +187,13 @@ set olds = {docs/**/*.md as old-*}
 set backups = {docs/**/*.md as *.bak}
 ```
 
+To retrieve the result of an executed command, you can use the syntax `{eval COMMANDLINE}`:
+```
+set params = {eval pkg-config --cflags --libs gtk+-3.0}
+```
+If the command returns successfully, the output of this command will be returned.  
+If it returns unsuccessfully, an error will be printed to the console and an empty ("") value will be returned.
+
 ## Building/Hacking *Boop!*
 Boop is written in TypeScript and runs on [Deno](https://deno.land/).  
 To execute it manually, simply install Deno and run via Deno, enabling **read**, **write**, **env** and **run** access:  
