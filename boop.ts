@@ -370,6 +370,7 @@ async function run_process(tags:any[], args:string[]):Promise<true|false|'aborte
 		});
 
 		success = (await process.status()).success;
+
 	}catch(error){
 		console.error(error.message);
 	}
@@ -377,6 +378,30 @@ async function run_process(tags:any[], args:string[]):Promise<true|false|'aborte
 	await runQueue.end_job();
 
 	return success;
+}
+
+async function evaluate_process(args:string[]):Promise<string|false> {
+	try{
+		const process = Deno.run({
+			cmd: args,
+			stdout: 'piped',
+			stderr: 'piped',
+			stdin: 'null'
+		});
+
+		const success = (await process.status()).success;
+		if(!success){
+			log_status_failure(`${color.bold('Failure')} executing: ${params_quote(args)}`);
+			return false;
+		}
+
+		const output = (new TextDecoder).decode(await process.output());
+		return output;
+		
+	}catch(error){
+		console.error(error.message);
+		return false;
+	}
 }
 
 type ScriptLine = {
@@ -735,7 +760,29 @@ class Script {
 			value.replaceAll(/{(.*?)}/g, (fullstring:string, expression:string) => {
 				replaceTasks.push((async() => {
 					let match:RegExpMatchArray|null;
-					if(match = expression.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s*\.\s*([a-zA-Z_][a-zA-Z0-9_-]*))?$/)){
+					if(match = expression.match(/^eval\s+(.+)/)){
+						const commandline = match[1];
+
+						if(verbosity>=Verbosity.tasksAndCommands) {
+							log_verbose(true, `> ${commandline}`);
+						}
+
+						const result = await evaluate_process(params_parse(commandline));
+
+						if(result===false){
+							if(verbosity>=Verbosity.tasksAndCommands) {
+								log_verbose(true, `< FAILED`);
+							}
+							return '';
+
+						}else{
+							if(verbosity>=Verbosity.tasksAndCommands) {
+								log_verbose(true, `< ${result}`);
+							}
+							return result;
+						}
+
+					}else if(match = expression.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s*\.\s*([a-zA-Z_][a-zA-Z0-9_-]*))?$/)){
 						const varName = match[1];
 						const property = match[2] as string|undefined;
 						const value = vars.get(varName)||'';
