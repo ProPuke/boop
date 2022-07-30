@@ -55,3 +55,10 @@ Run the TASK in the tasks.boop script, passing it specified FLAGS
 ```
 
 Fuller docs and info is available [here](docs.md).
+
+## Installing
+
+Download the latest [release](https://github.com/ProPuke/boop/releases) and place the executable in your path
+
+Or, install [deno](https://deno.land/) and execute the command:  
+`deno install --force --allow-read --allow-write --allow-env --allow-run https://raw.githubusercontent.com/ProPuke/boop/master/boop.ts`
