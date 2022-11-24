@@ -153,6 +153,15 @@ This is only valid inside a task.
 `COMMAND` can be any valid value.  
 `ARGUMENTS` can be 0 or more of any valid value.
 
+```
+optional run COMMAND ARGUMENTS...
+```
+Attempt to optionally run the specified COMMAND with optional ARGUMENTS.  
+If the specified command fails, execution will still continue.  
+This is only valid inside a task.  
+`COMMAND` can be any valid value.  
+`ARGUMENTS` can be 0 or more of any valid value.
+
 ### Expressions
 Expressions can be embedded within values. They sit within {...}.  
 Expressions are evaluated immediately, using the current variable values at that point in code.  
