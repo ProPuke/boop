@@ -11,6 +11,10 @@ or return a selection with the filenames altered:
 ```
 {src/**/*.cpp as *.hpp}
 ```
+additionally, if you have a filename in a variable, you can return an altered version of that:
+```
+{filename as *.bak}
+```
 
 You can use the `each` keyword to iterate over lists of things, or globs, inside of or outside of tasks:
 ```
@@ -142,9 +146,31 @@ A task can contain multiple `requires` declarations.
 `FILENAMES` is any valid value (space separated if multiple, with shell escaping rules for spaces and special characters)
 
 ```
+cd PATH
+```
+Change the current run directory for the current task to the specified relative path.  
+This is only valid inside a task.  
+`PATH` is a valid relative path and the full path must resolve to a directory that exists.
+
+```
+cd -
+```
+Change the run directory for the current task to the *previous* path it was set to.  
+This is only valid inside a task.  
+
+```
 run COMMAND ARGUMENTS...
 ```
 Run the specified COMMAND with optional ARGUMENTS.  
+This is only valid inside a task.  
+`COMMAND` can be any valid value.  
+`ARGUMENTS` can be 0 or more of any valid value.
+
+```
+optional run COMMAND ARGUMENTS...
+```
+Attempt to optionally run the specified COMMAND with optional ARGUMENTS.  
+If the specified command fails, execution will still continue.  
 This is only valid inside a task.  
 `COMMAND` can be any valid value.  
 `ARGUMENTS` can be 0 or more of any valid value.
@@ -156,8 +182,8 @@ To embed variable values simple write the name within {}:
 ```
 set noun1 = stranger
 set verb1 = love
-set noun2 = know
-set verb2 = rules
+set verb2 = know
+set noun2 = rules
 set additional = so do I
 
 set example = I'm no {noun1} to {verb1}. You {verb2} the {noun2} and {additional}

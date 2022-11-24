@@ -359,14 +359,15 @@ function params_quote(params:string[]):string {
 	return shellQuote.quote(params);
 }
 
-async function run_process(tags:any[], args:string[]):Promise<true|false|'aborted'> {
+async function run_process(tags:any[], args:string[], cwd?:string):Promise<true|false|'aborted'> {
 	if(!await runQueue.begin_job(tags)) return 'aborted';
 
 	let success = false;
 
 	try{
 		const process = Deno.run({
-			cmd: args
+			cmd: args,
+			cwd
 		});
 
 		success = (await process.status()).success;
@@ -416,6 +417,10 @@ type ParsedLine = {
 	command: string,
 	source: string,
 	debugVars: string
+} | {
+	type: 'cd',
+	path: string,
+	source: string,
 }
 
 class ParseError extends Error {
@@ -678,31 +683,87 @@ class Script {
 								}
 
 								let succeeded = true;
+								let cwd = Deno.cwd();
+								const cwdHistory:string[] = [];
 
 								for(const line of task.parsedLines){
-									if(verbosity>=Verbosity.debug) {
-										log_verbose(true, `>> ${line.source}`);
-										if(line.debugVars){
-											log_verbose(true, `   (${line.debugVars})`);
-										}
+									switch(line.type){
+										case 'run':
+											if(verbosity>=Verbosity.debug) {
+												log_verbose(true, `>> ${line.source}`);
+												if(line.debugVars){
+													log_verbose(true, `   (${line.debugVars})`);
+												}
+											}
+		
+											if(verbosity>=Verbosity.tasksAndCommands) {
+												log_verbose(true, `> ${line.command}`);
+											}
+		
+											if(!dryRun) {
+												const result = await run_process(tags, params_parse(line.command), cwd);
+												if(isCancelled) return 'aborted';
+													
+												if(line.optional&&result===false) return true;
+		
+												if(result!==true){
+													runQueue.cancel_tag(currentRunTag);
+													succeeded = false;
+													break;
+												}
+											}
+										break;
+										case 'cd':
+											if(verbosity>=Verbosity.debug) {
+												log_verbose(true, `>> ${line.source}`);
+											}
+		
+											if(verbosity>=Verbosity.tasksAndCommands) {
+												log_verbose(true, `> cd ${line.path}`);
+											}
+		
+											if(!dryRun) {
+												if(line.path=='-'){
+													const old = cwdHistory.pop();
+													if(!old){
+														log_status_failure(`Unable to change to previous directory - no previous path existed`);
+														runQueue.cancel_tag(currentRunTag);
+														succeeded = false;
+														break;
+													}
+													cwd = old;
+
+												}else{
+													cwdHistory.push(cwd);
+													if(line.path.length>0&&line.path[0]=='/'){
+														cwd = path.normalize(line.path);
+													}else{
+														cwd = path.join(cwd, line.path);
+													}
+													try{
+														const info = await Deno.stat(cwd);
+														if(!info.isDirectory){
+															log_status_failure(`Path is not a directory: ${cwd}`);
+															runQueue.cancel_tag(currentRunTag);
+															succeeded = false;
+															break;
+														}
+													}catch(error){
+														if(error instanceof Deno.errors.NotFound){
+															log_status_failure(`Path not found: ${cwd}`);
+															runQueue.cancel_tag(currentRunTag);
+															succeeded = false;
+															break;
+														}
+
+														throw error;
+													}
+												}
+											}
+										break;
 									}
 
-									if(verbosity>=Verbosity.tasksAndCommands) {
-										log_verbose(true, `> ${line.command}`);
-									}
-
-									if(!dryRun) {
-										const result = await run_process(tags, params_parse(line.command));
-										if(isCancelled) return 'aborted';
-											
-										if(line.optional&&result===false) return true;
-
-										if(result!==true){
-											runQueue.cancel_tag(currentRunTag);
-											succeeded = false;
-											break;
-										}
-									}
+									if(!succeeded) break;
 								}
 
 								//update cached data on all provided files, as they may have been updated
@@ -782,6 +843,39 @@ class Script {
 							return result;
 						}
 
+					}else if(match = expression.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s+as (\S+))?\s*$/)){
+						const varName = match[1];
+						const rename = match[2] as string|undefined;
+						let value = vars.get(varName)||'';
+
+						if(rename){
+							let filenames:string[] = [];
+
+							match = rename.match(/^([^*]*)(\*)([^*]*)(?:\.)(\*|[^*]*)$/);
+							if(!match){
+								throw new ParseError(line.lineNumber, `Invalid rename glob: ${rename}`);
+							}
+
+							const renamePrefix = match[1];
+							const renameKeep = match[2]=='*';
+							const renamePostfix = match[3];
+							const renameExtension = match[4]=='*'?false:match[4];
+
+							for(let filename of params_parse(value)){
+								const dirname = path.dirname(filename);
+								const extensionEnding = renameExtension?`.${renameExtension}`:'';
+								const basename = renameExtension==undefined?path.basename(filename):path.basename(filename, path.extname(filename));
+
+								filename = (dirname?`${dirname}/`:'')+renamePrefix+(renameKeep?basename:'')+renamePostfix+extensionEnding;
+
+								filenames.push(filename);
+							}
+
+							value = params_quote(filenames);
+						}
+	
+						return value;
+	
 					}else if(match = expression.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s*\.\s*([a-zA-Z_][a-zA-Z0-9_-]*))?$/)){
 						const varName = match[1];
 						const property = match[2] as string|undefined;
@@ -918,6 +1012,12 @@ class Script {
 					}
 					continue;
 				}
+
+			}else if(match = line.source.match(/^cd\s+(.*)$/)){
+				const path = await parse(line, match[1]);
+				if(!currentTask) throw new ParseError(line.lineNumber, "Cannot use 'cd` outside of a task");
+				
+				currentTask.parsedLines.push({ type: 'cd', path, source: line.source });
 
 			}else if(match = line.source.match(/^(optional\s+)?run\s+(.*)$/)){
 				const isOptional = !!match[1];
