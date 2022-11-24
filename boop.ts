@@ -782,6 +782,39 @@ class Script {
 							return result;
 						}
 
+					}else if(match = expression.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s+as (\S+))?\s*$/)){
+						const varName = match[1];
+						const rename = match[2] as string|undefined;
+						let value = vars.get(varName)||'';
+
+						if(rename){
+							let filenames:string[] = [];
+
+							match = rename.match(/^([^*]*)(\*)([^*]*)(?:\.)(\*|[^*]*)$/);
+							if(!match){
+								throw new ParseError(line.lineNumber, `Invalid rename glob: ${rename}`);
+							}
+
+							const renamePrefix = match[1];
+							const renameKeep = match[2]=='*';
+							const renamePostfix = match[3];
+							const renameExtension = match[4]=='*'?false:match[4];
+
+							for(let filename of params_parse(value)){
+								const dirname = path.dirname(filename);
+								const extensionEnding = renameExtension?`.${renameExtension}`:'';
+								const basename = renameExtension==undefined?path.basename(filename):path.basename(filename, path.extname(filename));
+
+								filename = (dirname?`${dirname}/`:'')+renamePrefix+(renameKeep?basename:'')+renamePostfix+extensionEnding;
+
+								filenames.push(filename);
+							}
+
+							value = params_quote(filenames);
+						}
+	
+						return value;
+	
 					}else if(match = expression.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s*\.\s*([a-zA-Z_][a-zA-Z0-9_-]*))?$/)){
 						const varName = match[1];
 						const property = match[2] as string|undefined;

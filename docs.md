@@ -11,6 +11,10 @@ or return a selection with the filenames altered:
 ```
 {src/**/*.cpp as *.hpp}
 ```
+additionally, if you have a filename in a variable, you can return an altered version of that:
+```
+{filename as *.bak}
+```
 
 You can use the `each` keyword to iterate over lists of things, or globs, inside of or outside of tasks:
 ```
