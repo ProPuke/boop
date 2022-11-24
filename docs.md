@@ -146,6 +146,19 @@ A task can contain multiple `requires` declarations.
 `FILENAMES` is any valid value (space separated if multiple, with shell escaping rules for spaces and special characters)
 
 ```
+cd PATH
+```
+Change the current run directory for the current task to the specified relative path.  
+This is only valid inside a task.  
+`PATH` is a valid relative path and the full path must resolve to a directory that exists.
+
+```
+cd -
+```
+Change the run directory for the current task to the *previous* path it was set to.  
+This is only valid inside a task.  
+
+```
 run COMMAND ARGUMENTS...
 ```
 Run the specified COMMAND with optional ARGUMENTS.  
