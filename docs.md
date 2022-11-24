@@ -169,8 +169,8 @@ To embed variable values simple write the name within {}:
 ```
 set noun1 = stranger
 set verb1 = love
-set noun2 = know
-set verb2 = rules
+set verb2 = know
+set noun2 = rules
 set additional = so do I
 
 set example = I'm no {noun1} to {verb1}. You {verb2} the {noun2} and {additional}
