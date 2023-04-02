@@ -880,26 +880,31 @@ class Script {
 						const varName = match[1];
 						const property = match[2] as string|undefined;
 						const value = vars.get(varName)||'';
-						if(property!==undefined){
-							switch(property){
-								case 'dir':
-									return params_quote([path.dirname(value)]);
-	
-								case 'file':
-									return params_quote([path.basename(value)]);
-	
-								case 'ext':
-									return params_quote([path.extname(value)]);
-	
-								case 'name':
-									return params_quote([path.basename(value, path.extname(value))]);
-	
-								default:
-									throw new ParseError(line.lineNumber, `No such property: ${property}`);
+
+						const results = params_parse(value).map(value => {
+							if(property!==undefined){
+								switch(property){
+									case 'dir':
+										return path.dirname(value);
+		
+									case 'file':
+										return path.basename(value);
+		
+									case 'ext':
+										return path.extname(value);
+		
+									case 'name':
+										return path.basename(value, path.extname(value));
+		
+									default:
+										throw new ParseError(line.lineNumber, `No such property: ${property}`);
+								}
+							}else{
+								return value;
 							}
-						}
-	
-						return value?value:'';
+						});
+
+						return params_quote(results);
 	
 					}else if(match = expression.match(/^\s*(\S*\*\S*)(?:\s+as (\S+))?\s*$/)){
 						const glob = match[1];
@@ -1014,11 +1019,12 @@ class Script {
 				}
 
 			}else if(match = line.source.match(/^cd\s+(.*)$/)){
-				const path = await parse(line, match[1]);
 				if(!currentTask) throw new ParseError(line.lineNumber, "Cannot use 'cd` outside of a task");
-				
-				currentTask.parsedLines.push({ type: 'cd', path, source: line.source });
 
+				for(const path of params_parse(await parse(line, match[1]))){
+					currentTask.parsedLines.push({ type: 'cd', path, source: line.source });
+				}
+				
 			}else if(match = line.source.match(/^(optional\s+)?run\s+(.*)$/)){
 				const isOptional = !!match[1];
 				const command = await parse(line, match[2]);
