@@ -818,6 +818,8 @@ class Script {
 		const parse = async(line:ScriptLine, value:string):Promise<string> => {
 			const replaceTasks:Promise<string>[] = [];
 
+			const cwd = Deno.cwd();
+
 			value.replaceAll(/{(.*?)}/g, (fullstring:string, expression:string) => {
 				replaceTasks.push((async() => {
 					let match:RegExpMatchArray|null;
@@ -934,7 +936,7 @@ class Script {
 
 						for(const file of await file_search(glob)){
 							if(file.isFile){
-								let filename = file.path;
+								let filename = path.relative(cwd, file.path);
 	
 								if(rename){
 									const dirname = path.dirname(filename);
