@@ -818,9 +818,11 @@ class Script {
 		const parse = async(line:ScriptLine, value:string):Promise<string> => {
 			const replaceTasks:Promise<string>[] = [];
 
+			const matchExpression = /(?<!{){([^{}]*)}(?!})/g;
+
 			const cwd = Deno.cwd();
 
-			value.replaceAll(/{(.*?)}/g, (fullstring:string, expression:string) => {
+			value.replaceAll(matchExpression, (fullstring:string, expression:string) => {
 				replaceTasks.push((async() => {
 					let match:RegExpMatchArray|null;
 					if(match = expression.match(/^eval\s+(.+)/)){
@@ -961,9 +963,10 @@ class Script {
 
 			const replacements = await Promise.all(replaceTasks);
 
-			const result = value.replaceAll(/{(.*?)}/g, () => replacements.shift() as string );
-
-			return result;
+			return value
+				.replaceAll(matchExpression, () => replacements.shift() as string )
+				.replaceAll(/([{}])\1/g, '$1')
+			;
 		}
 
 		for(let i=start;i<end;i++){

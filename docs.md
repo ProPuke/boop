@@ -220,6 +220,12 @@ set params = {eval pkg-config --cflags --libs gtk+-3.0}
 If the command returns successfully, the output of this command will be returned.  
 If it returns unsuccessfully, an error will be printed to the console and an empty ("") value will be returned.
 
+If you wish to use the `{` `}` characters _within_ a command (for example, if running awk and passing parameters to it), you can escape these characters by writing them twice:
+
+```
+run awk '{{print $0}}' {file}
+```
+
 ## Building/Hacking *Boop!*
 Boop is written in TypeScript and runs on [Deno](https://deno.land/).  
 To execute it manually, simply install Deno and run via Deno, enabling **read**, **write**, **env** and **run** access:  
