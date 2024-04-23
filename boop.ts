@@ -457,7 +457,7 @@ class Script {
 				continue;
 			}
 			const indent = (line.match(/^([ \t]*)/)?.[1]||'').replaceAll('  ', '\t').length;
-			this.lines.push({lineNumber:i, indent, source:line.trimStart()});
+			this.lines.push({lineNumber:i+1, indent, source:line.trimStart()});
 			i++;
 		}
 	}
