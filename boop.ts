@@ -177,7 +177,7 @@ class JobPool {
 				}
 			}
 
-			return next;
+			if(!next) return false;
 		}
 		this.#activeJobs++;
 		return true;
