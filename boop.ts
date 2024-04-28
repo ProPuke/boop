@@ -312,12 +312,13 @@ for(let i=0;i<Deno.args.length;i++){
 						print_help();
 						Deno.exit(1);
 					}
-				}
 
-				console.error(`Invalid option: ${arg}`);
-				console.log();
-				print_help();
-				Deno.exit(1);
+				}else{
+					console.error(`Invalid option: ${arg}`);
+					console.log();
+					print_help();
+					Deno.exit(1);
+				}
 			}
 		}
 	}else{
