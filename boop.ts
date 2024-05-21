@@ -3,6 +3,10 @@ import * as path from "https://deno.land/std@0.136.0/path/mod.ts";
 // import * as shellQuote from "https://raw.githubusercontent.com/shopstic/ts-shell-quote/master/index.ts";
 import * as shellQuote from "https://raw.githubusercontent.com/ProPuke/ts-shell-quote/fix/invalid-parse-return-type/index.ts";
 import * as color from "https://deno.land/std@0.136.0/fmt/colors.ts";
+import * as ansi from "https://deno.land/x/ansi@1.0.1/mod.ts";
+import { TextLineStream } from "https://deno.land/std@0.224.0/streams/text_line_stream.ts";
+import { readLines } from "https://deno.land/std@0.223.0/io/read_lines.ts";
+import * as ptyFfi from "jsr:@sigma/pty-ffi";
 
 enum Verbosity {
 	none,
@@ -20,6 +24,9 @@ let dryRun = false;
 let jobs = 0;
 let watch = false;
 let verbosity = Verbosity.tasks;
+let lastTaskStarted = null as string|null;
+const spinner = ['◜ ',' ◝',' ◞','◟ '];
+const spinnerComplete = '◉ ';
 const flags:string[] = [];
 
 function print_help() {
@@ -44,26 +51,128 @@ function print_version() {
 	console.log(`Boop! v${programVersion}`);
 }
 
+function trim_string(line:string, maxLength:number) {
+	// return line.length>maxLength?line.substring(0, maxLength-3)+'...':line;
+	return line.length>maxLength?line.substring(0, maxLength/2)+'...'+line.substring(line.length-(maxLength/2-3), line.length):line;
+}
+
+enum LogType {
+	none,
+	verbose,
+	status_action,
+	status_failure,
+	status_success
+};
+
+let _last_log_type = LogType.none;
+
+function log(...args:any[]) {
+	console.log(...args);
+	_last_log_type = LogType.none
+}
+
+function log_error(...args:any[]) {
+	console.error(...args);
+	_last_log_type = LogType.none
+}
+
+function log_clear() {
+	console.clear();
+	_last_log_type = LogType.none;
+}
+
 let _log_verbose_last = '';
 function log_verbose(allowRepeat:boolean, line:string) {
 	if(!allowRepeat&&_log_verbose_last==line) return;
+
+	if(_last_log_type==LogType.status_action) log_status_action_done();
 	console.log(line);
+	_last_log_type = LogType.verbose;
 	_log_verbose_last = line;
 }
 
-let _log_status_last = '';
-function log_status_action(line:string) {
-	if(_log_status_last==line) return;
-	console.error(color.brightYellow(`» ${line}`));
-	_log_status_last = line;
+function bold_first_word(line:String) {
+	const match = line.match(/(.*?)(\w+)(.*)/)
+	if(!match) return line;
+	return match[1]+color.bold(match[2])+match[3];
 }
 
+let _log_status_last = '';
+let log_status_action_offset = 0;
+function log_status_action(line:string) {
+	// console.error(color.brightYellow(`» ${line}`));
+
+	if(!log_status_action_erase(line)&&_last_log_type==LogType.status_action){
+		log_status_action_done();
+	}
+
+	const columns = Deno.consoleSize().columns;
+	const maxLength = columns-1-spinnerComplete.length;
+
+	if(line.length>maxLength){
+		console.log(color.brightYellow(`${spinner[(runQueue.jobsRan+log_status_action_offset)%spinner.length]}${bold_first_word(line.substring(0, maxLength-3)+'...')}`));
+	}else{
+		console.log(
+			color.brightYellow(`${spinner[(runQueue.jobsRan+log_status_action_offset)%spinner.length]}${bold_first_word(line)}`)
+			+(lastTaskStarted?` ${trim_string(lastTaskStarted, maxLength-line.length)}`:'')
+		);
+	}
+	_last_log_type = LogType.status_action;
+	_log_status_last = line;
+}
+function log_status_action_erase(line:string) {
+	if(_last_log_type==LogType.status_action&&_log_status_last==line){
+		Deno.stdout.writeSync(new TextEncoder().encode(ansi.cursorUp(1)+ansi.eraseEndLine()));
+		_last_log_type = LogType.none;
+		return true;
+	}else{
+		return false;
+	}
+}
+
+function log_status_action_done() {
+	Deno.stdout.writeSync(new TextEncoder().encode(ansi.cursorUp(1)+ansi.eraseEndLine()));
+
+	const columns = Deno.consoleSize().columns;
+	const maxLength = columns-1-spinnerComplete.length;
+	const line = _log_status_last;
+
+	if(line.length>maxLength){
+		console.log(color.brightYellow(`${spinnerComplete}${bold_first_word(line.substring(0, maxLength-3)+'...')}`));
+	}else{
+		console.log(
+			color.brightYellow(`${spinnerComplete}${bold_first_word(line)}`)
+		);
+	}
+}
+
+let _log_status_failure_last = '';
+let _log_status_failure_count = 0;
 function log_status_failure(line:string) {
-	console.error(color.red(`✖ ${line}`));
+	if(_last_log_type==LogType.status_action) log_status_action_done();
+	if(_last_log_type==LogType.status_failure&&line==_log_status_failure_last){
+		_log_status_failure_count++;
+		Deno.stdout.writeSync(new TextEncoder().encode(ansi.cursorUp(1)+ansi.eraseEndLine()));
+		console.error(color.red(`✖ ${bold_first_word(line)}`)+` x ${_log_status_failure_count}`);
+		return;
+	}
+
+	console.error(color.red(`✖ ${bold_first_word(line)}`));
+	_last_log_type = LogType.status_failure;
+	_log_status_failure_last = line;
+	_log_status_failure_count = 1;
 }
 
 function log_status_success(line:string) {
-	console.log(color.green(`✓ ${line}`));
+	if(_last_log_type==LogType.status_action) log_status_action_done();
+	console.log(color.green(`✓ ${bold_first_word(line)}`));
+	_last_log_type = LogType.status_success;
+}
+
+function refresh_status() {
+	if(_last_log_type==LogType.status_action) {
+		log_status_action(_log_status_last);
+	}
 }
 
 const _file_search_cache = new Map<string, Promise<fs.WalkEntry[]>>();
@@ -146,6 +255,7 @@ class JobPool {
 	readonly limit:number;
 	#queue:{tags:Symbol[], fulfill:(run:boolean)=>void}[] = [];
 	#activeJobs = 0;
+	#jobsStarted = 0;
 	#jobsRan = 0;
 	#cancelledTags:Symbol[] = [];
 
@@ -154,6 +264,7 @@ class JobPool {
 	}
 
 	get activeJobs() { return this.#activeJobs; }
+	get jobsStarted() { return this.#jobsStarted; }
 	get jobsRan() { return this.#jobsRan; }
 
 	async begin_job(tags:Symbol[] = []) {
@@ -179,6 +290,8 @@ class JobPool {
 
 			if(!next) return false;
 		}
+
+		this.#jobsStarted++;
 		this.#activeJobs++;
 		return true;
 	}
@@ -361,23 +474,64 @@ function params_quote(params:string[]):string {
 }
 
 async function run_process(tags:any[], args:string[], cwd?:string):Promise<true|false|'aborted'> {
+	if(args.length<1) return true;
+
 	if(!await runQueue.begin_job(tags)) return 'aborted';
+
+	lastTaskStarted = args.join(' ');
+	refresh_status();
 
 	let success = false;
 
 	try{
-		const process = Deno.run({
-			cmd: args,
-			cwd
-		});
+		const cmd = args.shift() as string;
 
-		success = (await process.status()).success;
+		if(false){
+			const command = new Deno.Command(cmd, {
+				args,
+				cwd
+			});
+
+			const process = command.spawn();
+
+			const status = await process.status
+
+			success = status.success;
+
+		}else{
+			const process = new Deno.Command(cmd, {
+				args,
+				cwd,
+				stdout: 'piped',
+				stderr: 'piped'
+			}).spawn();
+
+			async function outputPipe(pipe:ReadableStream) {
+				const lines = pipe
+					.pipeThrough(new TextDecoderStream)
+					.pipeThrough(new TextLineStream)
+				;
+				for await(const line of lines){
+					log(line);
+				}
+			}
+
+			await Promise.allSettled([
+				outputPipe(process.stdout),
+				outputPipe(process.stderr)
+			]);
+
+			const status = await process.status
+
+			success = status.success;
+		}
 
 	}catch(error){
-		console.error(error.message);
+		log_error(error.message);
 	}
 
 	await runQueue.end_job();
+	// log('PROCESS RUN COMPLETE');
 
 	return success;
 }
@@ -393,7 +547,7 @@ async function evaluate_process(args:string[]):Promise<string|false> {
 
 		const success = (await process.status()).success;
 		if(!success){
-			log_status_failure(`${color.bold('Failure')} executing: ${params_quote(args)}`);
+			log_status_failure(`Failure executing: ${params_quote(args)}`);
 			return false;
 		}
 
@@ -401,7 +555,7 @@ async function evaluate_process(args:string[]):Promise<string|false> {
 		return output;
 		
 	}catch(error){
-		console.error(error.message);
+		log_error(error.message);
 		return false;
 	}
 }
@@ -482,7 +636,7 @@ class Script {
 
 			for(const dependency of task.taskDependenciesByName){
 				if(childNames.includes(dependency.name)){
-					console.error(`Circular task dependency detected: `, childNames.join(' -> ')+` -> ${dependency.name}`);
+					log_error(`Circular task dependency detected: `, childNames.join(' -> ')+` -> ${dependency.name}`);
 					continue;
 				}
 
@@ -523,7 +677,7 @@ class Script {
 		const tasks = this.tasks.filter((x) => x.name==taskName);
 
 		if(tasks.length<1){
-			console.error(`Nothing to do for task "${taskName}"`);
+			log_error(`Nothing to do for task "${taskName}"`);
 			return {cancel:()=>{}, promise:Promise.resolve(false)};
 		}
 
@@ -579,7 +733,7 @@ class Script {
 													// await Promise.allSettled(dependencyJobs);
 													if(!isFinished) {
 														isFinished = true;
-														log_status_failure(`Could not run "${taskName}" task, as "${dependency.task.name}" task failed`);
+														log_status_failure(`Failure running "${taskName}" task, as "${dependency.task.name}" task failed`);
 														runQueue.cancel_tag(currentRunTag);
 														return 'aborted';
 													}
@@ -673,7 +827,7 @@ class Script {
 							// execute actions
 							if(outOfDate){
 								if(verbosity>=Verbosity.tasks) {
-									log_status_action(`${color.bold('Executing')} "${task.name}" task...`);
+									log_status_action(`Executing "${task.name}" task...`);
 								}
 
 								// mark all files we're about to change
@@ -703,6 +857,8 @@ class Script {
 		
 											if(!dryRun) {
 												const result = await run_process(tags, params_parse(line.command), cwd);
+												refresh_status();
+
 												if(isCancelled) return 'aborted';
 													
 												if(line.optional&&result===false) return true;
@@ -727,7 +883,7 @@ class Script {
 												if(line.path=='-'){
 													const old = cwdHistory.pop();
 													if(!old){
-														log_status_failure(`Unable to change to previous directory - no previous path existed`);
+														log_status_failure(`Error: Unable to change to previous directory - no previous path existed`);
 														runQueue.cancel_tag(currentRunTag);
 														succeeded = false;
 														break;
@@ -744,14 +900,14 @@ class Script {
 													try{
 														const info = await Deno.stat(cwd);
 														if(!info.isDirectory){
-															log_status_failure(`Path is not a directory: ${cwd}`);
+															log_status_failure(`Error: Path is not a directory: ${cwd}`);
 															runQueue.cancel_tag(currentRunTag);
 															succeeded = false;
 															break;
 														}
 													}catch(error){
 														if(error instanceof Deno.errors.NotFound){
-															log_status_failure(`Path not found: ${cwd}`);
+															log_status_failure(`Error: Path not found: ${cwd}`);
 															runQueue.cancel_tag(currentRunTag);
 															succeeded = false;
 															break;
@@ -799,7 +955,7 @@ class Script {
 			// if any solid failures, fail
 			for(const result of completed){
 				if(result.status!='fulfilled'||result.value===false){
-					log_status_failure(`${color.bold('Failure')} ${description}`);
+					log_status_failure(`Failure ${description}`);
 					return false;
 				}
 			}
@@ -1112,7 +1268,7 @@ async function run():Promise<boolean> {
 	try{
 		source = await Deno.readTextFileSync(scriptName);
 	}catch(error){
-		console.error(`Unable to read ${scriptName}`);
+		log_error(`Unable to read ${scriptName}`);
 		return false;
 	}
 
@@ -1131,7 +1287,7 @@ async function run():Promise<boolean> {
 		
 	}catch(error){
 		if(error instanceof ParseError){
-			console.error(`Error in ${scriptName}:${error.lineNumber}: ${error.message}`);
+			log_error(`Error in ${scriptName}:${error.lineNumber}: ${error.message}`);
 			return false;
 		}else{
 			throw error;
@@ -1144,7 +1300,7 @@ async function run():Promise<boolean> {
 async function run_once(script:Script, flags:string[]):Promise<true|false|'aborted'> {
 	const result = await script.execute([], taskName).promise;
 	if(result===true){
-		log_status_success(`${color.bold('Success')} running task "${taskName}"`);
+		log_status_success(`Success running task "${taskName}"`);
 	}
 
 	return result;
@@ -1190,17 +1346,16 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 	let task:ScriptExecution|undefined = activeScript.execute([], taskName);
 	let taskJobsBefore = 0;
 	let lastModifiedFiles:string[] = [];
-	task.promise.then((result) => {
+	const jobsRanBefore = runQueue.jobsRan;
+	await task.promise.then((result) => {
 		lastModifiedFiles = activeScript?activeScript.modifiedFiles:[];
 		activeScript = undefined;
 		task = undefined;
 
-		if(runQueue.jobsRan>0){
+		if(runQueue.jobsRan>jobsRanBefore){
 			if(result===true){
-				log_status_success(`${color.bold('Success')} running task "${taskName}"`);
-				console.log();
-			}else if(result===false){
-				console.log();
+				log_status_success(`Success running task "${taskName}"`);
+				log();
 			}
 		}
 	});
@@ -1214,20 +1369,23 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 				validBaseDirs.push(path);
 
 			}catch(error){
-				log_status_failure(`Base directory not found: ${path}`);
+				log_status_failure(`Error: Base directory not found: ${path}`);
 			}
 		}
 		basedirs = validBaseDirs;
 	}
 
-	if(basedirs.length<1){
-		log_status_failure(`No files to be watched, found in ${scriptName}. Executing task just once...`);
-		console.log();
+	const print_waiting = () => {
+		log(`🔍 Watching for file changes (in ${basedirs.map(x => path.relative(cwd, x)).join('/ ')}/) ...`);
+	};
 
-	}else{
-		log_status_action(`${color.bold('Watching')} for file changes (in ${basedirs.map(x => path.relative(cwd, x)).join('/ ')}/)`);
-		console.log();
+	if(basedirs.length<1){
+		log_status_failure(`Warning: No files to be watched, found in ${scriptName}. Executing task just once...`);
+		log();
+		return;
 	}
+
+	print_waiting();
 
 	const scriptPath = path.resolve(scriptName);
 
@@ -1256,7 +1414,7 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 							if(modifiedFiles.some(modified => path.resolve(modified) == eventPath)){
 								break;
 							}
-							// console.log(eventPath);
+							// log(eventPath);
 							filesMatched = true;
 							break;
 						}
@@ -1273,13 +1431,13 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 			const scheduled = now+700;
 
 			if(task){
-				console.log(`${scriptMatched?'Script':'Files'} changed during active task. Cancelling...`);
+				log(`${scriptMatched?'Script':'Files'} changed during active task. Cancelling...`);
 				task.cancel();
 				await task.promise;
 				
 			}else{
 				if(scriptMatched&&!scriptChanged){
-					console.log(`Script changed. Restarting...`);
+					log(`Script changed. Restarting...`);
 				}
 			}
 
@@ -1288,7 +1446,7 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 			}
 
 			currentTimeout = setTimeout(async () => {
-				console.clear();
+				log_clear();
 				
 				clear_file_search_cache();
 				clear_file_date_cache();
@@ -1301,26 +1459,27 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 					}
 
 				}else{
+					log_status_action(`Executing...`);
 					const script = new Script(source);
 					await script.compile(flags);
+					log_status_action_erase(`Executing...`);
 					taskJobsBefore = runQueue.jobsRan;
 					activeScript = script;
 					task = activeScript.execute([], taskName);
-					task.promise.then((result) => {
+					await task.promise.then((result) => {
 						lastModifiedFiles = activeScript?activeScript.modifiedFiles:[];
 						activeScript = undefined;
 						task = undefined;
 						if(result===true){
 							if(runQueue.jobsRan>taskJobsBefore){
-								log_status_success(`${color.bold('Success')} running task "${taskName}"`);
-								console.log();
+								log_status_success(`Success running task "${taskName}"`);
+								log();
 							}
-
-						}else if(result===false){
-							console.log();
 						}
 					});
 				}
+
+				print_waiting();
 
 			}, Math.max(0, scheduled-Date.now()));
 		}
