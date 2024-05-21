@@ -251,6 +251,27 @@ function get_basedirs_of_dirs(dirs:string[]):string[] {
 	return dirs;
 }
 
+function rename(filenames:string[], pattern:string):string[] {
+	const match = pattern.match(/^(?:([^*]*)\*\*)?([^*]*)(\*)([^*]*)(?:\.)(\*|[^*]*)$/);
+	if(!match){
+		throw new Error(`Invalid rename glob: ${pattern}`);
+	}
+
+	const dirPrefix = match[1]||'';
+	const filePrefix = match[2];
+	const fileKeep = match[3]=='*';
+	const filePostfix = match[4];
+	const fileExt = match[5]=='*'?false:match[5];
+
+	return filenames.map(filename => {
+		const dirname = path.dirname(filename);
+		const extensionEnding = fileExt?`.${fileExt}`:'';
+		const basename = fileExt==false?path.basename(filename):path.basename(filename, path.extname(filename));
+
+		return dirPrefix+(dirname?`${dirname}/`:'')+filePrefix+(fileKeep?basename:'')+filePostfix+extensionEnding;
+	});
+}
+
 class JobPool {
 	readonly limit:number;
 	#queue:{tags:Symbol[], fulfill:(run:boolean)=>void}[] = [];
@@ -1006,30 +1027,16 @@ class Script {
 
 					}else if(match = expression.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s+as (\S+))?\s*$/)){
 						const varName = match[1];
-						const rename = match[2] as string|undefined;
+						const renamePattern = match[2] as string|undefined;
 						let value = vars.get(varName)||'';
 
-						if(rename){
-							let filenames:string[] = [];
+						if(renamePattern){
+							let filenames = params_parse(value);
 
-							match = rename.match(/^([^*]*)(\*)([^*]*)(?:\.)(\*|[^*]*)$/);
-							if(!match){
-								throw new ParseError(line.lineNumber, `Invalid rename glob: ${rename}`);
-							}
-
-							const renamePrefix = match[1];
-							const renameKeep = match[2]=='*';
-							const renamePostfix = match[3];
-							const renameExtension = match[4]=='*'?false:match[4];
-
-							for(let filename of params_parse(value)){
-								const dirname = path.dirname(filename);
-								const extensionEnding = renameExtension?`.${renameExtension}`:'';
-								const basename = renameExtension==undefined?path.basename(filename):path.basename(filename, path.extname(filename));
-
-								filename = (dirname?`${dirname}/`:'')+renamePrefix+(renameKeep?basename:'')+renamePostfix+extensionEnding;
-
-								filenames.push(filename);
+							try {
+								filenames = rename(filenames, renamePattern);
+							}catch(error){
+								throw new ParseError(line.lineNumber, error.message);
 							}
 
 							value = params_quote(filenames);
@@ -1069,46 +1076,22 @@ class Script {
 	
 					}else if(match = expression.match(/^\s*(\S*\*\S*)(?:\s+as (\S+))?\s*$/)){
 						const glob = match[1];
-						const rename = match[2];
+						const renamePattern = match[2];
 	
-						let renamePrefix = '';
-						let renameKeep = true;
-						let renamePostfix = '';
-						let renameExtension:string|false = false;
-
 						if(!this.globs.includes(glob)){
 							this.globs.push(glob);
 						}
 	
-						if(rename){
-							match = rename.match(/^([^*]*)(\*)([^*]*)(?:\.)(\*|[^*]*)$/);
-							if(!match){
-								throw new ParseError(line.lineNumber, `Invalid rename glob: ${rename}`);
-							}
-							renamePrefix = match[1];
-							renameKeep = match[2]=='*';
-							renamePostfix = match[3];
-							renameExtension = match[4]=='*'?false:match[4];
-						}
-	
-						const filenames:string[] = [];
+						let filenames = (await file_search(glob)).filter(file => file.isFile).map(file => path.relative(cwd, file.path));
 
-						for(const file of await file_search(glob)){
-							if(file.isFile){
-								let filename = path.relative(cwd, file.path);
-	
-								if(rename){
-									const dirname = path.dirname(filename);
-									const extensionEnding = renameExtension?`.${renameExtension}`:'';
-									const basename = renameExtension==undefined?path.basename(filename):path.basename(filename, path.extname(filename));
-	
-									filename = (dirname?`${dirname}/`:'')+renamePrefix+(renameKeep?basename:'')+renamePostfix+extensionEnding;
-								}
-	
-								filenames.push(filename);
+						if(renamePattern){
+							try {
+								filenames = rename(filenames, renamePattern);
+							}catch(error){
+								throw new ParseError(line.lineNumber, error.message);
 							}
 						}
-	
+
 						return params_quote(filenames);
 	
 					}else{
