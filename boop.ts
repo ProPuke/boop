@@ -252,7 +252,7 @@ function get_basedirs_of_dirs(dirs:string[]):string[] {
 }
 
 function rename(filenames:string[], pattern:string):string[] {
-	const match = pattern.match(/^(?:([^*]*)\*\*)?([^*]*)(\*)([^*]*)(?:\.)(\*|[^*]*)$/);
+	const match = pattern.match(/^(?:([^*]*)\*\*\/)?([^*]*)(\*)([^*]*)(?:\.)(\*|[^*]*)$/);
 	if(!match){
 		throw new Error(`Invalid rename glob: ${pattern}`);
 	}
@@ -264,11 +264,13 @@ function rename(filenames:string[], pattern:string):string[] {
 	const fileExt = match[5]=='*'?false:match[5];
 
 	return filenames.map(filename => {
-		const dirname = path.dirname(filename);
-		const extensionEnding = fileExt?`.${fileExt}`:'';
-		const basename = fileExt==false?path.basename(filename):path.basename(filename, path.extname(filename));
+		let dirname = path.dirname(filename);
+		if(dirname=='.') dirname = ''; //dirname returns "." when no path is present
 
-		return dirPrefix+(dirname?`${dirname}/`:'')+filePrefix+(fileKeep?basename:'')+filePostfix+extensionEnding;
+		const extension = fileExt?`.${fileExt}`:path.extname(filename);
+		const basename = path.basename(filename, path.extname(filename));
+
+		return dirPrefix+(dirname?`${dirname}/`:'')+filePrefix+(fileKeep?basename:'')+filePostfix+extension;
 	});
 }
 
