@@ -175,7 +175,7 @@ This is only valid inside a task.
 `COMMAND` can be any valid value.  
 `ARGUMENTS` can be 0 or more of any valid value.
 
-### Expressions
+### Expressions and Variables
 Expressions can be embedded within values. They sit within {...}.  
 Expressions are evaluated immediately, using the current variable values at that point in code.  
 To embed variable values simple write the name within {}:
@@ -212,6 +212,18 @@ set originals = {docs/**/*.md}
 set olds = {docs/**/*.md as old-*}
 set backups = {docs/**/*.md as *.bak}
 ```
+
+You can also reassign a variable later, and reference its previous self.  
+This is useful for building up a variable over multiple lines:
+```
+set words = fee
+set words = {words} fi fo
+set words = {words} fum
+```
+(words is now equal to `fee fi fo fum`)
+
+Note that if you set a variable within an indented scope this change will **not** persist outside of this indent.  
+Leaving this scope the variable will return to whatever it was previously set to (if at all).
 
 To retrieve the result of an executed command, you can use the syntax `{eval COMMANDLINE}`:
 ```

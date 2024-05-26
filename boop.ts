@@ -1207,7 +1207,7 @@ class Script {
 				};
 
 				this.tasks.push(currentTask);
-				await this.compileRegion(currentTask, i+1, end, vars, flags);
+				await this.compileRegion(currentTask, i+1, end, new Map<string, string>(vars), flags);
 
 				i = end-1;
 
@@ -1227,7 +1227,7 @@ class Script {
 					for(const value of values){
 						vars.set(name, value);
 
-						await this.compileRegion(currentTask, i+1, end, vars, flags);
+						await this.compileRegion(currentTask, i+1, end, new Map<string, string>(vars), flags);
 
 						if(shadowedVar===undefined){
 							vars.delete(name);
