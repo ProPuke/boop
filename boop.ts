@@ -258,13 +258,14 @@ function rename(filenames:string[], pattern:string):string[] {
 	}
 
 	const dirPrefix = match[1]||'';
+	const dirKeep = match[1]!==undefined||!match[2];
 	const filePrefix = match[2];
 	const fileKeep = match[3]=='*';
 	const filePostfix = match[4];
 	const fileExt = match[5]=='*'?false:match[5];
 
 	return filenames.map(filename => {
-		let dirname = path.dirname(filename);
+		let dirname = dirKeep?path.dirname(filename):'';
 		if(dirname=='.') dirname = ''; //dirname returns "." when no path is present
 
 		const extension = fileExt?`.${fileExt}`:path.extname(filename);
