@@ -8,4 +8,4 @@ task build
 	run deno compile --allow-read --allow-write --allow-env --allow-run --output bin/ boop.ts
 
 task install
-	run deno install --force --allow-read --allow-write --allow-env --allow-run boop.ts
+	run deno install --global --force --allow-read --allow-write --allow-env --allow-run boop.ts
