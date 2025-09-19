@@ -62,7 +62,13 @@ function log_command(task:Task, cwd:string, command:string, allowRepeat = false)
 	cwd = path.relative(Deno.cwd(), cwd);
 	const prefix = task.name+(cwd.length>0?` ${cwd}`:'');
 
-	const columns = Deno.consoleSize().columns;
+	let columns:number;
+	try{
+		columns = Deno.consoleSize().columns; // NOTE: this can fail and throw (this happens during vscode task execution)
+	}catch(err){
+		columns = 80;
+	}
+
 	const prefixPrint = trim_string(prefix, columns/4);
 	const commandPrint = trim_string(command, columns-prefixPrint.length-3);
 	console.log(`${color.brightBlack(prefixPrint)} ${color.cyan('⯈')} ${commandPrint}`);
