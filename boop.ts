@@ -1,12 +1,7 @@
 import * as fs from 'https://deno.land/std@0.135.0/fs/mod.ts';
+import * as shell from './shell.ts'
 import * as path from "https://deno.land/std@0.136.0/path/mod.ts";
-// import * as shellQuote from "https://raw.githubusercontent.com/shopstic/ts-shell-quote/master/index.ts";
-import * as shellQuote from "https://raw.githubusercontent.com/ProPuke/ts-shell-quote/fix/invalid-parse-return-type/index.ts";
 import * as color from "https://deno.land/std@0.136.0/fmt/colors.ts";
-import * as ansi from "https://deno.land/x/ansi@1.0.1/mod.ts";
-import { TextLineStream } from "https://deno.land/std@0.224.0/streams/text_line_stream.ts";
-import { readLines } from "https://deno.land/std@0.223.0/io/read_lines.ts";
-import * as ptyFfi from "jsr:@sigma/pty-ffi";
 
 enum Verbosity {
 	none,
@@ -24,9 +19,6 @@ let dryRun = false;
 let jobs = 0;
 let watch = false;
 let verbosity = Verbosity.tasks;
-let lastTaskStarted = null as string|null;
-const spinner = ['◜ ',' ◝',' ◞','◟ '];
-const spinnerComplete = '◉ ';
 const flags:string[] = [];
 
 function print_help() {
@@ -56,123 +48,48 @@ function trim_string(line:string, maxLength:number) {
 	return line.length>maxLength?line.substring(0, maxLength/2)+'...'+line.substring(line.length-(maxLength/2-3), line.length):line;
 }
 
-enum LogType {
-	none,
-	verbose,
-	status_action,
-	status_failure,
-	status_success
-};
-
-let _last_log_type = LogType.none;
-
-function log(...args:any[]) {
-	console.log(...args);
-	_last_log_type = LogType.none
-}
-
-function log_error(...args:any[]) {
-	console.error(...args);
-	_last_log_type = LogType.none
-}
-
-function log_clear() {
-	console.clear();
-	_last_log_type = LogType.none;
-}
-
 let _log_verbose_last = '';
 function log_verbose(allowRepeat:boolean, line:string) {
 	if(!allowRepeat&&_log_verbose_last==line) return;
-
-	if(_last_log_type==LogType.status_action) log_status_action_done();
 	console.log(line);
-	_last_log_type = LogType.verbose;
 	_log_verbose_last = line;
 }
 
-function bold_first_word(line:String) {
-	const match = line.match(/(.*?)(\w+)(.*)/)
-	if(!match) return line;
-	return match[1]+color.bold(match[2])+match[3];
+let _log_command_last = '';
+function log_command(task:Task, cwd:string, command:string, allowRepeat = false) {
+	if(!allowRepeat&&_log_command_last==command) return;
+
+	cwd = path.relative(Deno.cwd(), cwd);
+	const prefix = task.name+(cwd.length>0?` ${cwd}`:'');
+
+	const columns = Deno.consoleSize().columns;
+	const prefixPrint = trim_string(prefix, columns/4);
+	const commandPrint = trim_string(command, columns-prefixPrint.length-3);
+	console.log(`${color.brightBlack(prefixPrint)} ${color.cyan('⯈')} ${commandPrint}`);
+	_log_command_last = command;
 }
 
-let _log_status_last = '';
-let log_status_action_offset = 0;
+const _log_status_actions = new Set<string>();
 function log_status_action(line:string) {
-	// console.error(color.brightYellow(`» ${line}`));
+	if(_log_status_actions.has(line)) return;
 
-	if(!log_status_action_erase(line)&&_last_log_type==LogType.status_action){
-		log_status_action_done();
-	}
-
-	const columns = Deno.consoleSize().columns;
-	const maxLength = columns-1-spinnerComplete.length;
-
-	if(line.length>maxLength){
-		console.log(color.brightYellow(`${spinner[(runQueue.jobsRan+log_status_action_offset)%spinner.length]}${bold_first_word(line.substring(0, maxLength-3)+'...')}`));
-	}else{
-		console.log(
-			color.brightYellow(`${spinner[(runQueue.jobsRan+log_status_action_offset)%spinner.length]}${bold_first_word(line)}`)
-			+(lastTaskStarted?` ${trim_string(lastTaskStarted, maxLength-line.length)}`:'')
-		);
-	}
-	_last_log_type = LogType.status_action;
-	_log_status_last = line;
-}
-function log_status_action_erase(line:string) {
-	if(_last_log_type==LogType.status_action&&_log_status_last==line){
-		Deno.stdout.writeSync(new TextEncoder().encode(ansi.cursorUp(1)+ansi.eraseEndLine()));
-		_last_log_type = LogType.none;
-		return true;
-	}else{
-		return false;
-	}
+	console.error(color.brightCyan(`» ${line}`));
+	_log_status_actions.add(line);
 }
 
-function log_status_action_done() {
-	Deno.stdout.writeSync(new TextEncoder().encode(ansi.cursorUp(1)+ansi.eraseEndLine()));
-
-	const columns = Deno.consoleSize().columns;
-	const maxLength = columns-1-spinnerComplete.length;
-	const line = _log_status_last;
-
-	if(line.length>maxLength){
-		console.log(color.brightYellow(`${spinnerComplete}${bold_first_word(line.substring(0, maxLength-3)+'...')}`));
-	}else{
-		console.log(
-			color.brightYellow(`${spinnerComplete}${bold_first_word(line)}`)
-		);
-	}
-}
-
-let _log_status_failure_last = '';
-let _log_status_failure_count = 0;
 function log_status_failure(line:string) {
-	if(_last_log_type==LogType.status_action) log_status_action_done();
-	if(_last_log_type==LogType.status_failure&&line==_log_status_failure_last){
-		_log_status_failure_count++;
-		Deno.stdout.writeSync(new TextEncoder().encode(ansi.cursorUp(1)+ansi.eraseEndLine()));
-		console.error(color.red(`✖ ${bold_first_word(line)}`)+` x ${_log_status_failure_count}`);
-		return;
-	}
-
-	console.error(color.red(`✖ ${bold_first_word(line)}`));
-	_last_log_type = LogType.status_failure;
-	_log_status_failure_last = line;
-	_log_status_failure_count = 1;
+	console.log();
+	console.error(color.red(`✖ ${line}`));
 }
 
 function log_status_success(line:string) {
-	if(_last_log_type==LogType.status_action) log_status_action_done();
-	console.log(color.green(`✓ ${bold_first_word(line)}`));
-	_last_log_type = LogType.status_success;
+	console.log();
+	// console.log(color.green(`✓ ${line}`));
+	console.log(`${color.green('✓ ' + color.bold('Success'))} ${line}`);
 }
 
-function refresh_status() {
-	if(_last_log_type==LogType.status_action) {
-		log_status_action(_log_status_last);
-	}
+function log_reset() {
+	_log_status_actions.clear();
 }
 
 const _file_search_cache = new Map<string, Promise<fs.WalkEntry[]>>();
@@ -216,7 +133,7 @@ async function file_date(path:string, useCache = true) {
 
 	try{
 		const stat = await Deno.stat(path);
-		if(stat.isFile&&stat.mtime){
+		if((stat.isFile||stat.isDirectory)&&stat.mtime){
 			date = stat.mtime.valueOf();
 		}
 	}catch(error){}
@@ -265,7 +182,7 @@ function rename(filenames:string[], pattern:string):string[] {
 	const fileExt = match[5]=='*'?false:match[5];
 
 	return filenames.map(filename => {
-		let dirname = dirKeep?path.dirname(filename):'';
+		let dirname = dirKeep?path.dirname(filename):false;
 		if(dirname=='.') dirname = ''; //dirname returns "." when no path is present
 
 		const extension = fileExt?`.${fileExt}`:path.extname(filename);
@@ -279,7 +196,6 @@ class JobPool {
 	readonly limit:number;
 	#queue:{tags:Symbol[], fulfill:(run:boolean)=>void}[] = [];
 	#activeJobs = 0;
-	#jobsStarted = 0;
 	#jobsRan = 0;
 	#cancelledTags:Symbol[] = [];
 
@@ -288,7 +204,6 @@ class JobPool {
 	}
 
 	get activeJobs() { return this.#activeJobs; }
-	get jobsStarted() { return this.#jobsStarted; }
 	get jobsRan() { return this.#jobsRan; }
 
 	async begin_job(tags:Symbol[] = []) {
@@ -314,8 +229,6 @@ class JobPool {
 
 			if(!next) return false;
 		}
-
-		this.#jobsStarted++;
 		this.#activeJobs++;
 		return true;
 	}
@@ -478,108 +391,37 @@ if(jobs<1){
 
 const runQueue = new JobPool(jobs);
 
-function params_parse(params:string):string[] {
-	const parsed = shellQuote.parse(params, Deno.env.toObject());
-
-	const args:string[] = [];
-	for(const term of parsed){
-		if(typeof term == 'string'){
-			args.push(term);
-		}else if('op' in term && term.pattern){
-			args.push(term.pattern);
-		}
-	}
-
-	return args;
-}
-
-function params_quote(params:string[]):string {
-	return shellQuote.quote(params);
-}
-
-async function run_process(tags:any[], args:string[], cwd?:string):Promise<true|false|'aborted'> {
-	if(args.length<1) return true;
-
+async function run_process(tags:any[], args:shell.ShellParams, cwd?:string, envvars?:Record<string,string>, onStart?:()=>void):Promise<true|false|'aborted'> {
 	if(!await runQueue.begin_job(tags)) return 'aborted';
 
-	lastTaskStarted = args.join(' ');
-	refresh_status();
+	if(onStart) onStart();
 
 	let success = false;
 
 	try{
-		const cmd = args.shift() as string;
-
-		if(false){
-			const command = new Deno.Command(cmd, {
-				args,
-				cwd
-			});
-
-			const process = command.spawn();
-
-			const status = await process.status
-
-			success = status.success;
-
-		}else{
-			const process = new Deno.Command(cmd, {
-				args,
-				cwd,
-				stdout: 'piped',
-				stderr: 'piped'
-			}).spawn();
-
-			async function outputPipe(pipe:ReadableStream) {
-				const lines = pipe
-					.pipeThrough(new TextDecoderStream)
-					.pipeThrough(new TextLineStream)
-				;
-				for await(const line of lines){
-					log(line);
-				}
-			}
-
-			await Promise.allSettled([
-				outputPipe(process.stdout),
-				outputPipe(process.stderr)
-			]);
-
-			const status = await process.status
-
-			success = status.success;
-		}
-
+		success = await shell.execute(args, cwd, envvars);
 	}catch(error){
-		log_error(error.message);
+		console.error(error.message);
 	}
 
 	await runQueue.end_job();
-	// log('PROCESS RUN COMPLETE');
 
 	return success;
 }
 
-async function evaluate_process(args:string[]):Promise<string|false> {
+async function evaluate_process(args:shell.ShellParams):Promise<string|false> {
 	try{
-		const process = Deno.run({
-			cmd: args,
-			stdout: 'piped',
-			stderr: 'piped',
-			stdin: 'null'
-		});
+		const output = await shell.evaluate(args);
 
-		const success = (await process.status()).success;
-		if(!success){
-			log_status_failure(`Failure executing: ${params_quote(args)}`);
+		if(output===false){
+			log_status_failure(`${color.bold('Failure')} executing: ${shell.quote_shell_params(args)}`);
 			return false;
 		}
 
-		const output = (new TextDecoder).decode(await process.output());
 		return output;
 		
 	}catch(error){
-		log_error(error.message);
+		console.error(error.message);
 		return false;
 	}
 }
@@ -593,11 +435,12 @@ type ScriptLine = {
 type ParsedLine = {
 	type: 'run',
 	optional: boolean,
-	command: string,
+	args: shell.ShellParams,
 	source: string,
-	debugVars: string
+	debugVars: string,
+	envvars: Record<string,string>
 } | {
-	type: 'cd',
+	type: 'cd'|'mkdir'|'rm',
 	path: string,
 	source: string,
 }
@@ -660,7 +503,7 @@ class Script {
 
 			for(const dependency of task.taskDependenciesByName){
 				if(childNames.includes(dependency.name)){
-					log_error(`Circular task dependency detected: `, childNames.join(' -> ')+` -> ${dependency.name}`);
+					console.error(`Circular task dependency detected: `, childNames.join(' -> ')+` -> ${dependency.name}`);
 					continue;
 				}
 
@@ -701,7 +544,7 @@ class Script {
 		const tasks = this.tasks.filter((x) => x.name==taskName);
 
 		if(tasks.length<1){
-			log_error(`Nothing to do for task "${taskName}"`);
+			console.error(`Nothing to do for task "${taskName}"`);
 			return {cancel:()=>{}, promise:Promise.resolve(false)};
 		}
 
@@ -757,7 +600,7 @@ class Script {
 													// await Promise.allSettled(dependencyJobs);
 													if(!isFinished) {
 														isFinished = true;
-														log_status_failure(`Failure running "${taskName}" task, as "${dependency.task.name}" task failed`);
+														log_status_failure(`Could not run "${taskName}" task, as "${dependency.task.name}" task failed`);
 														runQueue.cancel_tag(currentRunTag);
 														return 'aborted';
 													}
@@ -851,7 +694,7 @@ class Script {
 							// execute actions
 							if(outOfDate){
 								if(verbosity>=Verbosity.tasks) {
-									log_status_action(`Executing "${task.name}" task...`);
+									log_status_action(`${color.bold('Executing')} "${task.name}" task...`);
 								}
 
 								// mark all files we're about to change
@@ -866,23 +709,35 @@ class Script {
 								const cwdHistory:string[] = [];
 
 								for(const line of task.parsedLines){
+									if(verbosity>=Verbosity.debug) {
+										log_verbose(true, `>> ${line.source}`);
+									}
+
 									switch(line.type){
 										case 'run':
 											if(verbosity>=Verbosity.debug) {
-												log_verbose(true, `>> ${line.source}`);
 												if(line.debugVars){
 													log_verbose(true, `   (${line.debugVars})`);
 												}
 											}
-		
-											if(verbosity>=Verbosity.tasksAndCommands) {
-												log_verbose(true, `> ${line.command}`);
-											}
-		
-											if(!dryRun) {
-												const result = await run_process(tags, params_parse(line.command), cwd);
-												refresh_status();
 
+											const commandString = shell.quote_shell_params(line.args);
+		
+											if(dryRun) {
+												if(verbosity>=Verbosity.tasksAndCommands) {
+													log_verbose(true, `> ${commandString}`);
+												} else {
+													log_command(task, cwd, commandString);
+												}
+
+											} else {
+												const result = await run_process(tags, line.args, cwd, line.envvars, () => {
+													if(verbosity>=Verbosity.tasksAndCommands) {
+														log_verbose(true, `> ${commandString}`);
+													} else {
+														log_command(task, cwd, commandString);
+													}
+												});
 												if(isCancelled) return 'aborted';
 													
 												if(line.optional&&result===false) return true;
@@ -895,10 +750,6 @@ class Script {
 											}
 										break;
 										case 'cd':
-											if(verbosity>=Verbosity.debug) {
-												log_verbose(true, `>> ${line.source}`);
-											}
-		
 											if(verbosity>=Verbosity.tasksAndCommands) {
 												log_verbose(true, `> cd ${line.path}`);
 											}
@@ -907,7 +758,7 @@ class Script {
 												if(line.path=='-'){
 													const old = cwdHistory.pop();
 													if(!old){
-														log_status_failure(`Error: Unable to change to previous directory - no previous path existed`);
+														log_status_failure(`Unable to change to previous directory - no previous path existed`);
 														runQueue.cancel_tag(currentRunTag);
 														succeeded = false;
 														break;
@@ -916,7 +767,7 @@ class Script {
 
 												}else{
 													cwdHistory.push(cwd);
-													if(line.path.length>0&&line.path[0]=='/'){
+													if(line.path.length>0&&line.path[0]==path.sep){
 														cwd = path.normalize(line.path);
 													}else{
 														cwd = path.join(cwd, line.path);
@@ -924,14 +775,14 @@ class Script {
 													try{
 														const info = await Deno.stat(cwd);
 														if(!info.isDirectory){
-															log_status_failure(`Error: Path is not a directory: ${cwd}`);
+															log_status_failure(`Path is not a directory: ${cwd}`);
 															runQueue.cancel_tag(currentRunTag);
 															succeeded = false;
 															break;
 														}
 													}catch(error){
 														if(error instanceof Deno.errors.NotFound){
-															log_status_failure(`Error: Path not found: ${cwd}`);
+															log_status_failure(`Path not found: ${cwd}`);
 															runQueue.cancel_tag(currentRunTag);
 															succeeded = false;
 															break;
@@ -940,6 +791,44 @@ class Script {
 														throw error;
 													}
 												}
+											}
+										break;
+										case 'mkdir':
+											if(!dryRun) {
+												const fullPath = path.join(cwd, line.path);
+
+												try{
+													if(Deno.statSync(fullPath).isDirectory) break; //already exists;
+												}catch(error){}
+
+												const localPath = path.relative(Deno.cwd(), fullPath);
+												if(verbosity>=Verbosity.tasksAndCommands) {
+													log_verbose(true, `> mkdir ${localPath}`);
+												}else{
+													log_command(task, cwd, `mkdir ${localPath}`);
+												}
+
+												Deno.mkdirSync(fullPath, {recursive: true}); //note: recursive does not throw on exists
+											}
+										break;
+										case 'rm':
+											if(!dryRun) {
+												const fullPath = path.join(cwd, line.path);
+
+												try{
+													Deno.statSync(fullPath);
+												}catch(error){
+													break; // does not exist
+												}
+
+												const localPath = path.relative(Deno.cwd(), fullPath);
+												if(verbosity>=Verbosity.tasksAndCommands) {
+													log_verbose(true, `> rm ${localPath}`);
+												}else{
+													log_command(task, cwd, `rm ${localPath}`);
+												}
+
+												Deno.removeSync(fullPath, {recursive: true});
 											}
 										break;
 									}
@@ -979,7 +868,7 @@ class Script {
 			// if any solid failures, fail
 			for(const result of completed){
 				if(result.status!='fulfilled'||result.value===false){
-					log_status_failure(`Failure ${description}`);
+					log_status_failure(`${color.bold('Failure')} ${description}`);
 					return false;
 				}
 			}
@@ -996,6 +885,8 @@ class Script {
 	}
 
 	async compileRegion(currentTask:Task|undefined, start:number, end:number, vars:Map<string,string>, flags:string[] = []) {
+		const envvars = Deno.env.toObject();
+
 		const parse = async(line:ScriptLine, value:string):Promise<string> => {
 			const replaceTasks:Promise<string>[] = [];
 
@@ -1013,7 +904,7 @@ class Script {
 							log_verbose(true, `> ${commandline}`);
 						}
 
-						const result = await evaluate_process(params_parse(commandline));
+						let result = await evaluate_process(shell.parse_params(commandline));
 
 						if(result===false){
 							if(verbosity>=Verbosity.tasksAndCommands) {
@@ -1022,6 +913,7 @@ class Script {
 							return '';
 
 						}else{
+							result = result.trim();
 							if(verbosity>=Verbosity.tasksAndCommands) {
 								log_verbose(true, `< ${result}`);
 							}
@@ -1034,7 +926,7 @@ class Script {
 						let value = vars.get(varName)||'';
 
 						if(renamePattern){
-							let filenames = params_parse(value);
+							let filenames = shell.parse_params(value);
 
 							try {
 								filenames = rename(filenames, renamePattern);
@@ -1042,7 +934,7 @@ class Script {
 								throw new ParseError(line.lineNumber, error.message);
 							}
 
-							value = params_quote(filenames);
+							value = shell.quote_params(filenames);
 						}
 	
 						return value;
@@ -1052,7 +944,7 @@ class Script {
 						const property = match[2] as string|undefined;
 						const value = vars.get(varName)||'';
 
-						const results = params_parse(value).map(value => {
+						const results = shell.parse_params(value).map(value => {
 							if(property!==undefined){
 								switch(property){
 									case 'dir':
@@ -1066,6 +958,11 @@ class Script {
 		
 									case 'name':
 										return path.basename(value, path.extname(value));
+
+									case 'rmdir':
+										const dirs = path.dirname(value).split(path.sep).slice(1);
+										const dirname = dirs.join(path.sep);
+										return (dirname?dirname+path.sep:'')+path.basename(value);
 		
 									default:
 										throw new ParseError(line.lineNumber, `No such property: ${property}`);
@@ -1075,7 +972,7 @@ class Script {
 							}
 						});
 
-						return params_quote(results);
+						return shell.quote_params(results);
 	
 					}else if(match = expression.match(/^\s*(\S*\*\S*)(?:\s+as (\S+))?\s*$/)){
 						const glob = match[1];
@@ -1095,7 +992,7 @@ class Script {
 							}
 						}
 
-						return params_quote(filenames);
+						return shell.quote_params(filenames);
 	
 					}else{
 						throw new ParseError(line.lineNumber, `Invalid expression: ${expression}`);
@@ -1123,7 +1020,7 @@ class Script {
 				continue;
 
 			}else if(match = line.source.match(/^provides\s+(.+)$/)){
-				const items = params_parse(await parse(line, match[1]));
+				const items = shell.parse_params(await parse(line, match[1]));
 				if(!currentTask) throw new ParseError(line.lineNumber, "Cannot use 'provides` outside of a task");
 				if(items){
 					for(let item of items){
@@ -1134,7 +1031,7 @@ class Script {
 			}else if(match = line.source.match(/^requires\s+(?:(?:(optional)\s+)?(task)\s+)?(.+)$/)){
 				const isTask = !!match[2];
 				const isOptional = !!match[1];
-				const items = params_parse(await parse(line, match[3]));
+				const items = shell.parse_params(await parse(line, match[3]));
 				if(!currentTask) throw new ParseError(line.lineNumber, "Cannot use 'requires` outside of a task");
 				if(items) {
 					for(let item of items){
@@ -1166,12 +1063,20 @@ class Script {
 					continue;
 				}
 
-			}else if(match = line.source.match(/^cd\s+(.*)$/)){
-				if(!currentTask) throw new ParseError(line.lineNumber, "Cannot use 'cd` outside of a task");
+			}else if(match = line.source.match(/^(cd|mkdir|rm)\s+(.*)$/)){
+				const command = match[1] as 'cd'|'mkdir'|'rm';
+				const param = match[2];
+				if(!currentTask) throw new ParseError(line.lineNumber, `Cannot use '${command}\` outside of a task`);
 
-				for(const path of params_parse(await parse(line, match[1]))){
-					currentTask.parsedLines.push({ type: 'cd', path, source: line.source });
+				for(const path of shell.parse_params(await parse(line, param))){
+					currentTask.parsedLines.push({ type: command, path, source: line.source });
 				}
+				
+			}else if(match = line.source.match(/^envvar\s+([a-zA-Z_][a-zA-Z0-9_-]*)\s*=\s*(.*)$/)){
+				const name = match[1];
+				const value = await parse(line, match[2]);
+
+				envvars[name] = value;
 				
 			}else if(match = line.source.match(/^(optional\s+)?run\s+(.*)$/)){
 				const isOptional = !!match[1];
@@ -1184,8 +1089,8 @@ class Script {
 						debugVars.push(`${name}=${JSON.stringify(value)}`);
 					}
 				}
-				
-				currentTask.parsedLines.push({ type: 'run', optional: isOptional, command: command, source: line.source, debugVars:debugVars.join(' ') });
+
+				currentTask.parsedLines.push({ type: 'run', optional: isOptional, args: shell.parse_shell_params(command, envvars), source: line.source, debugVars:debugVars.join(' '), envvars });
 
 			}else if(match = line.source.match(/^task\s+(.*)$/)){
 				const name = await parse(line, match[1]);
@@ -1214,7 +1119,7 @@ class Script {
 
 			}else if(match = line.source.match(/^each\s+([a-zA-Z_][a-zA-Z0-9_-]*)\s+in\s+(\S.*?)\s*$/)){
 				const name = match[1];
-				const values = params_parse(await parse(line, match[2])).map(x => params_quote([x]));
+				const values = shell.parse_params(await parse(line, match[2])).map(x => shell.quote_params([x]));
 
 				let end = i+1;
 				while(end<this.lines.length){
@@ -1252,9 +1157,10 @@ let source:string;
 
 async function run():Promise<boolean> {
 	try{
+		log_reset();
 		source = await Deno.readTextFileSync(scriptName);
 	}catch(error){
-		log_error(`Unable to read ${scriptName}`);
+		console.error(`Unable to read ${scriptName}`);
 		return false;
 	}
 
@@ -1273,7 +1179,7 @@ async function run():Promise<boolean> {
 		
 	}catch(error){
 		if(error instanceof ParseError){
-			log_error(`Error in ${scriptName}:${error.lineNumber}: ${error.message}`);
+			console.error(`Error in ${scriptName}:${error.lineNumber}: ${error.message}`);
 			return false;
 		}else{
 			throw error;
@@ -1286,7 +1192,7 @@ async function run():Promise<boolean> {
 async function run_once(script:Script, flags:string[]):Promise<true|false|'aborted'> {
 	const result = await script.execute([], taskName).promise;
 	if(result===true){
-		log_status_success(`Success running task "${taskName}"`);
+		log_status_success(`running task "${taskName}"`);
 	}
 
 	return result;
@@ -1332,16 +1238,17 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 	let task:ScriptExecution|undefined = activeScript.execute([], taskName);
 	let taskJobsBefore = 0;
 	let lastModifiedFiles:string[] = [];
-	const jobsRanBefore = runQueue.jobsRan;
-	await task.promise.then((result) => {
+	task.promise.then((result) => {
 		lastModifiedFiles = activeScript?activeScript.modifiedFiles:[];
 		activeScript = undefined;
 		task = undefined;
 
-		if(runQueue.jobsRan>jobsRanBefore){
+		if(runQueue.jobsRan>0){
 			if(result===true){
-				log_status_success(`Success running task "${taskName}"`);
-				log();
+				log_status_success(`running task "${taskName}"`);
+				console.log();
+			}else if(result===false){
+				console.log();
 			}
 		}
 	});
@@ -1355,23 +1262,20 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 				validBaseDirs.push(path);
 
 			}catch(error){
-				log_status_failure(`Error: Base directory not found: ${path}`);
+				log_status_failure(`Base directory not found: ${path}`);
 			}
 		}
 		basedirs = validBaseDirs;
 	}
 
-	const print_waiting = () => {
-		log(`🔍 Watching for file changes (in ${basedirs.map(x => path.relative(cwd, x)).join('/ ')}/) ...`);
-	};
-
 	if(basedirs.length<1){
-		log_status_failure(`Warning: No files to be watched, found in ${scriptName}. Executing task just once...`);
-		log();
-		return;
-	}
+		log_status_failure(`No files to be watched, found in ${scriptName}. Executing task just once...`);
+		console.log();
 
-	print_waiting();
+	}else{
+		log_status_action(`${color.bold('Watching')} for file changes (in ${basedirs.map(x => path.relative(cwd, x)).join('/ ')}/)`);
+		console.log();
+	}
 
 	const scriptPath = path.resolve(scriptName);
 
@@ -1389,19 +1293,28 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 
 			if(eventPath==scriptPath){
 				scriptMatched = true;
+				if(verbosity>=Verbosity.debug) {
+					console.log(`${color.bold(color.yellow('Changed'))} ${scriptName}`);
+				}
 				break;
 
 			}else{
 				if(filenames.has(eventPath)&&!modifiedFiles.some(modified => path.resolve(modified) == eventPath)){
 					filesMatched = true;
+					if(verbosity>=Verbosity.debug) {
+						console.log(`${color.bold(color.yellow('Changed'))} ${eventPath}`);
+					}
 				}else{
 					for(const regex of regexes){
 						if(regex.test(eventPath)){
 							if(modifiedFiles.some(modified => path.resolve(modified) == eventPath)){
 								break;
 							}
-							// log(eventPath);
+							// console.log(eventPath);
 							filesMatched = true;
+							if(verbosity>=Verbosity.debug) {
+								console.log(`${color.bold(color.yellow('Changed'))} ${eventPath}`);
+							}
 							break;
 						}
 					}
@@ -1417,13 +1330,13 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 			const scheduled = now+700;
 
 			if(task){
-				log(`${scriptMatched?'Script':'Files'} changed during active task. Cancelling...`);
+				console.log(`${scriptMatched?'Script':'Files'} changed during active task. Cancelling...`);
 				task.cancel();
 				await task.promise;
 				
 			}else{
 				if(scriptMatched&&!scriptChanged){
-					log(`Script changed. Restarting...`);
+					console.log(`Script changed. Restarting...`);
 				}
 			}
 
@@ -1432,7 +1345,7 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 			}
 
 			currentTimeout = setTimeout(async () => {
-				log_clear();
+				console.clear();
 				
 				clear_file_search_cache();
 				clear_file_date_cache();
@@ -1445,27 +1358,26 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 					}
 
 				}else{
-					log_status_action(`Executing...`);
 					const script = new Script(source);
 					await script.compile(flags);
-					log_status_action_erase(`Executing...`);
 					taskJobsBefore = runQueue.jobsRan;
 					activeScript = script;
 					task = activeScript.execute([], taskName);
-					await task.promise.then((result) => {
+					task.promise.then((result) => {
 						lastModifiedFiles = activeScript?activeScript.modifiedFiles:[];
 						activeScript = undefined;
 						task = undefined;
 						if(result===true){
 							if(runQueue.jobsRan>taskJobsBefore){
-								log_status_success(`Success running task "${taskName}"`);
-								log();
+								log_status_success(`running task "${taskName}"`);
+								console.log();
 							}
+
+						}else if(result===false){
+							console.log();
 						}
 					});
 				}
-
-				print_waiting();
 
 			}, Math.max(0, scheduled-Date.now()));
 		}
