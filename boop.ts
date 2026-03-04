@@ -608,7 +608,7 @@ class Script {
 														isFinished = true;
 														log_status_failure(`Could not run "${taskName}" task, as "${dependency.task.name}" task failed`);
 														runQueue.cancel_tag(currentRunTag);
-														return 'aborted';
+														return false;
 													}
 													return false;
 												}
