@@ -606,7 +606,7 @@ class Script {
 													// await Promise.allSettled(dependencyJobs);
 													if(!isFinished) {
 														isFinished = true;
-														log_status_failure(`Could not run "${taskName}" task, as "${dependency.task.name}" task failed`);
+														log_status_failure(`Could not run "${task.name}" task, as "${dependency.task.name}" task failed`);
 														runQueue.cancel_tag(currentRunTag);
 														return false;
 													}
