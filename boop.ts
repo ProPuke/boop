@@ -412,7 +412,7 @@ async function run_process(tags:any[], args:shell.ShellParams, cwd?:string, envv
 	try{
 		success = await shell.execute(args, cwd, envvars);
 	}catch(error){
-		console.error(error.message);
+		console.error(error instanceof Error?error.message:error);
 	}
 
 	await runQueue.end_job();
@@ -432,7 +432,7 @@ async function evaluate_process(args:shell.ShellParams):Promise<string|false> {
 		return output;
 		
 	}catch(error){
-		console.error(error.message);
+		console.error(error instanceof Error?error.message:error);
 		return false;
 	}
 }
@@ -942,7 +942,7 @@ class Script {
 							try {
 								filenames = rename(filenames, renamePattern);
 							}catch(error){
-								throw new ParseError(line.lineNumber, error.message);
+								throw new ParseError(line.lineNumber, error instanceof Error?error.message:`${error}`);
 							}
 
 							value = shell.quote_params(filenames);
@@ -999,7 +999,7 @@ class Script {
 							try {
 								filenames = rename(filenames, renamePattern);
 							}catch(error){
-								throw new ParseError(line.lineNumber, error.message);
+								throw new ParseError(line.lineNumber, error instanceof Error?error.message:`${error}`);
 							}
 						}
 
@@ -1190,7 +1190,7 @@ async function run():Promise<boolean> {
 		
 	}catch(error){
 		if(error instanceof ParseError){
-			console.error(`Error in ${scriptName}:${error.lineNumber}: ${error.message}`);
+			console.error(`Error in ${scriptName}:${error.lineNumber}: ${error instanceof Error?error.message:error}`);
 			return false;
 		}else{
 			throw error;
@@ -1243,7 +1243,7 @@ async function run_watch(script:Script, taskName:string, flags:string[]) {
 	// reduce to common basedirs
 	basedirs = get_basedirs_of_dirs(basedirs);
 
-	let currentTimeout:number|undefined;
+	let currentTimeout:NodeJS.Timeout|undefined;
 
 	let activeScript:Script|undefined = script;
 	let task:ScriptExecution|undefined = activeScript.execute([], taskName);
