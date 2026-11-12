@@ -83,9 +83,13 @@ function log_status_action(line:string) {
 	_log_status_actions.add(line);
 }
 
+const _log_status_failures = new Set<string>();
 function log_status_failure(line:string) {
+	if(_log_status_failures.has(line)) return;
+
 	console.log();
 	console.error(color.red(`✖ ${line}`));
+	_log_status_failures.add(line);
 }
 
 function log_status_success(line:string) {
@@ -96,6 +100,7 @@ function log_status_success(line:string) {
 
 function log_reset() {
 	_log_status_actions.clear();
+	_log_status_failures.clear();
 }
 
 const _file_search_cache = new Map<string, Promise<fs.WalkEntry[]>>();
