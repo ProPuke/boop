@@ -11,7 +11,7 @@ enum Verbosity {
 }
 
 const programName = import.meta.url.match(/(?:^|\/)([^\\\/\.]+)(\.[^\\\/\.]*)?$/)?.[1]||'boop';
-const programVersion = `1.2.0`;
+const programVersion = `1.2.1`;
 
 const scriptName = 'tasks.boop';
 let taskName = '';
